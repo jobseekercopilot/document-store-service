@@ -1,0 +1,62 @@
+package com.jobseekercopilot.documentstore.dto;
+
+import com.jobseekercopilot.documentstore.entity.DocumentType;
+import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@Schema(description = "Response containing generated document details")
+public class GeneratedDocumentResponse {
+
+    @Schema(description = "Unique identifier of the document", example = "550e8400-e29b-41d4-a716-446655440000")
+    private UUID id;
+
+    @Schema(description = "ID of the user who owns the document", example = "user-123")
+    private String userId;
+
+    @Schema(description = "ID of the job this document relates to", example = "job-456")
+    private String jobId;
+
+    @Schema(description = "ID of the application this document version belongs to")
+    private String applicationId;
+
+    @Schema(description = "Type of document", example = "CV", allowableValues = {"CV", "COVER_LETTER"})
+    private DocumentType documentType;
+
+    @Schema(description = "Title of the document", example = "Java Developer CV")
+    private String title;
+
+    @Schema(description = "Generated document content", example = "Generated CV content...")
+    private String content;
+
+    @Schema(description = "Version number for this application/document type")
+    private Integer version;
+
+    @Schema(description = "Whether this document version is active")
+    private boolean active;
+
+    @Schema(description = "Original filename for uploaded documents")
+    private String originalFilename;
+
+    @Schema(description = "Document source", allowableValues = {"GENERATED", "UPLOADED"})
+    private DocumentSourceType sourceType;
+
+    @Schema(description = "User or service that created this document")
+    private String createdBy;
+
+    @Schema(description = "Timestamp when the document was created")
+    private LocalDateTime createdAt;
+
+    @Schema(description = "Timestamp when the document was updated")
+    private LocalDateTime updatedAt;
+}

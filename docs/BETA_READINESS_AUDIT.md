@@ -2,7 +2,23 @@
 
 Audit date: 2026-07-23
 
+STORE-01 producer update: 2026-07-24
+
 Status: **Not ready for private beta**
+
+## STORE-01 producer boundary
+
+The service now validates platform RS256/JWKS access tokens and distinct
+runtime producer, reader and environment-data credentials. Every public
+document/file operation resolves one owner and uses owner-scoped document or
+file queries. Foreign and missing UUIDs return the same stable denial, and
+application logs use redacted route families rather than raw owner, application,
+document or file IDs.
+
+This resolves the unauthenticated producer implementation finding only.
+Gateway, CV/Cover Letter, Document Export and Infrastructure rollout plus
+integrated cross-user journeys remain beta dependencies. See
+[`AUTHORIZATION_BOUNDARY.md`](AUTHORIZATION_BOUNDARY.md).
 
 ## Cross-repository ownership decision
 
@@ -39,11 +55,10 @@ file replacements mark older files inactive.
 
 ## Confirmed blockers
 
-1. Controllers have no authentication or authorisation. Callers can create,
-   list, read, delete, activate, deactivate, upload, and download by raw
-   user/application/document/file identifiers.
-2. User identity is accepted in request bodies and path parameters rather than
-   derived from a trusted authenticated principal.
+1. Approved consumers and Infrastructure have not yet rolled out the Document
+   Store bearer/service identity and owner-context contract end to end.
+2. Integrated cross-user tests do not yet cover the complete
+   Gateway/CV/Export/Store/Application Tracker journey.
 3. Generated CV/cover-letter text and exported bytes are stored as plaintext
    LOBs without an approved encryption, key-management, or storage boundary.
 4. The default database is in-memory H2; data disappears on restart.
@@ -61,14 +76,16 @@ file replacements mark older files inactive.
 10. DOCX inspection only looks for two ZIP entries and does not bound entry
     count, compression ratio, total expanded bytes, macros, external
     relationships, or active content. PDF signatures are not validated.
-11. File metadata trusts caller filenames and MIME types; ownership is not
-    joined when fetching a file by UUID.
+11. File metadata still trusts caller filenames and MIME types. File ownership
+    is now joined to the owning document for public UUID lookups.
 12. Deactivation scans all documents in memory for an application.
-13. Observability logs stable personal-data identifiers and has no documented
-    redaction/retention policy or security audit events.
-14. Tests prove happy-path CRUD and basic replacement but do not cover
-    cross-user denial, concurrent versioning, retention/deletion, encryption,
-    malicious uploads, large payloads, or durable restart.
+13. Application request/service logs now redact stable owner and resource
+    identifiers, but audit-event coverage and log-retention policy remain
+    incomplete.
+14. Tests now cover authentication, service least privilege, owner and
+    cross-user denial plus happy-path CRUD/replacement. They do not yet cover
+    concurrent versioning, retention/deletion, encryption, malicious uploads,
+    large payloads, durable restart or integrated consumers.
 15. Current Spring, Tomcat, Jackson, logging, and Swagger UI dependency
     findings include untriaged Critical/High advisories; the container has not
     been scanned.

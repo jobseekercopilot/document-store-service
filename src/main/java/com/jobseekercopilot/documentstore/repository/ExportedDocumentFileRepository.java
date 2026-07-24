@@ -12,8 +12,17 @@ public interface ExportedDocumentFileRepository extends JpaRepository<ExportedDo
     List<ExportedDocumentFile> findByGeneratedDocumentIdOrderByCreatedAtDesc(UUID generatedDocumentId);
     List<ExportedDocumentFile> findByGeneratedDocumentIdIn(List<UUID> generatedDocumentIds);
     void deleteByGeneratedDocumentIdIn(List<UUID> generatedDocumentIds);
-    List<ExportedDocumentFile> findByGeneratedDocumentIdAndActiveTrueOrderByUpdatedAtDesc(UUID generatedDocumentId);
-    List<ExportedDocumentFile> findByGeneratedDocumentIdAndFileTypeAndActiveTrue(UUID generatedDocumentId, FileType fileType);
+    Optional<ExportedDocumentFile> findByIdAndGeneratedDocument_UserId(UUID id, String userId);
+    List<ExportedDocumentFile> findByGeneratedDocumentIdAndGeneratedDocument_UserIdOrderByCreatedAtDesc(
+            UUID generatedDocumentId,
+            String userId);
+    List<ExportedDocumentFile> findByGeneratedDocumentIdAndGeneratedDocument_UserIdAndActiveTrueOrderByUpdatedAtDesc(
+            UUID generatedDocumentId,
+            String userId);
+    List<ExportedDocumentFile> findByGeneratedDocumentIdAndGeneratedDocument_UserIdAndFileTypeAndActiveTrue(
+            UUID generatedDocumentId,
+            String userId,
+            FileType fileType);
     Optional<ExportedDocumentFile> findFirstByGeneratedDocumentIdAndFileTypeAndActiveTrueOrderByUpdatedAtDesc(
             UUID generatedDocumentId, FileType fileType);
 }

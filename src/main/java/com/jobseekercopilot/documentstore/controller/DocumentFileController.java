@@ -5,11 +5,13 @@ import com.jobseekercopilot.documentstore.dto.DocumentFileResponse;
 import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
 import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.FileType;
+import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.service.DocumentFileService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -18,10 +20,12 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,21 +40,32 @@ import java.util.UUID;
 public class DocumentFileController {
 
     private final DocumentFileService service;
+    private final DocumentOwnerResolver ownerResolver;
 
     @PostMapping("/api/v1/document-files")
     @Operation(summary = "Save exported file", description = "Stores exported DOCX or PDF bytes for a generated document")
+    @SecurityRequirement(name = "serviceToken")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Exported file saved successfully"),
             @ApiResponse(responseCode = "400", description = "Validation error - missing or invalid fields"),
             @ApiResponse(responseCode = "404", description = "Generated document not found")
     })
-    public ResponseEntity<DocumentFileResponse> createDocumentFile(@Valid @RequestBody CreateDocumentFileRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.createDocumentFile(request));
+    public ResponseEntity<DocumentFileResponse> createDocumentFile(
+            @Valid @RequestBody CreateDocumentFileRequest request,
+            @Parameter(description = "Required owner context for approved producer identities")
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(service.createDocumentFile(ownerId, request));
     }
 
     @PostMapping(value = "/api/v1/documents/{generatedDocumentId}/files/upload",
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Upload replacement file", description = "Stores a user-uploaded DOCX or PDF replacement for a generated document")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Replacement file saved successfully"),
             @ApiResponse(responseCode = "400", description = "Validation error - missing or invalid upload"),
@@ -60,31 +75,55 @@ public class DocumentFileController {
             @Parameter(description = "UUID of the generated document") @PathVariable UUID generatedDocumentId,
             @RequestParam("file") MultipartFile file,
             @RequestParam("fileType") FileType fileType,
-            @RequestParam(value = "source", defaultValue = "USER_UPLOADED") FileSource source) {
+            @RequestParam(value = "source", defaultValue = "USER_UPLOADED") FileSource source,
+            @Parameter(description = "Required owner context for approved service identities")
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(service.uploadReplacementFile(generatedDocumentId, file, fileType, source));
+                .body(service.uploadReplacementFile(
+                        ownerId,
+                        generatedDocumentId,
+                        file,
+                        fileType,
+                        source));
     }
 
     @GetMapping("/api/v1/document-files/{id}")
     @Operation(summary = "Get exported file metadata")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Exported file metadata found"),
             @ApiResponse(responseCode = "404", description = "Exported file not found")
     })
     public ResponseEntity<DocumentFileResponse> getDocumentFileMetadata(
-            @Parameter(description = "UUID of the exported file") @PathVariable UUID id) {
-        return ResponseEntity.ok(service.getDocumentFileMetadata(id));
+            @Parameter(description = "UUID of the exported file") @PathVariable UUID id,
+            @Parameter(description = "Required owner context for approved service identities")
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(service.getDocumentFileMetadata(ownerId, id));
     }
 
     @GetMapping("/api/v1/document-files/{id}/download")
     @Operation(summary = "Download exported file")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Exported file bytes"),
             @ApiResponse(responseCode = "404", description = "Exported file not found")
     })
     public ResponseEntity<byte[]> downloadDocumentFile(
-            @Parameter(description = "UUID of the exported file") @PathVariable UUID id) {
-        ExportedDocumentFile file = service.getDocumentFile(id);
+            @Parameter(description = "UUID of the exported file") @PathVariable UUID id,
+            @Parameter(description = "Required owner context for approved service identities")
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        ExportedDocumentFile file = service.getDocumentFile(ownerId, id);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(file.getMimeType()))
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
@@ -96,23 +135,39 @@ public class DocumentFileController {
 
     @GetMapping("/api/v1/documents/{generatedDocumentId}/files")
     @Operation(summary = "List exported files for a generated document")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Exported file metadata list"),
             @ApiResponse(responseCode = "404", description = "Generated document not found")
     })
     public ResponseEntity<List<DocumentFileResponse>> getFilesForDocument(
-            @Parameter(description = "UUID of the generated document") @PathVariable UUID generatedDocumentId) {
-        return ResponseEntity.ok(service.getFilesForDocument(generatedDocumentId));
+            @Parameter(description = "UUID of the generated document") @PathVariable UUID generatedDocumentId,
+            @Parameter(description = "Required owner context for approved service identities")
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(service.getFilesForDocument(ownerId, generatedDocumentId));
     }
 
     @GetMapping("/api/v1/documents/{generatedDocumentId}/files/latest")
     @Operation(summary = "List latest active exported files for a generated document")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Latest active exported file metadata list"),
             @ApiResponse(responseCode = "404", description = "Generated document not found")
     })
     public ResponseEntity<List<DocumentFileResponse>> getLatestFilesForDocument(
-            @Parameter(description = "UUID of the generated document") @PathVariable UUID generatedDocumentId) {
-        return ResponseEntity.ok(service.getLatestFilesForDocument(generatedDocumentId));
+            @Parameter(description = "UUID of the generated document") @PathVariable UUID generatedDocumentId,
+            @Parameter(description = "Required owner context for approved service identities")
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(service.getLatestFilesForDocument(
+                ownerId,
+                generatedDocumentId));
     }
 }

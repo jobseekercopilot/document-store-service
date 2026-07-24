@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
@@ -19,9 +20,19 @@ public interface GeneratedDocumentRepository extends JpaRepository<GeneratedDocu
 
     List<GeneratedDocument> findByUserIdAndJobId(String userId, String jobId);
 
+    Optional<GeneratedDocument> findByIdAndUserId(UUID id, String userId);
+
     List<GeneratedDocument> findByDocumentType(DocumentType documentType);
 
-    List<GeneratedDocument> findByApplicationIdAndDocumentTypeOrderByVersionDesc(String applicationId, DocumentType documentType);
+    List<GeneratedDocument> findByApplicationIdAndDocumentTypeAndUserIdOrderByVersionDesc(
+            String applicationId,
+            DocumentType documentType,
+            String userId);
 
-    List<GeneratedDocument> findByApplicationIdAndDocumentTypeAndActiveTrue(String applicationId, DocumentType documentType);
+    List<GeneratedDocument> findByApplicationIdAndDocumentTypeAndActiveTrueAndUserId(
+            String applicationId,
+            DocumentType documentType,
+            String userId);
+
+    List<GeneratedDocument> findByApplicationIdAndUserId(String applicationId, String userId);
 }

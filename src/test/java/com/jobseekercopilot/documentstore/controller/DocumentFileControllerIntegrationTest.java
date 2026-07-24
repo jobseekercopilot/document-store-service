@@ -8,6 +8,8 @@ import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
+import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -44,6 +46,8 @@ class DocumentFileControllerIntegrationTest {
     private static final String DOCX_MIME_TYPE =
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     private static final String PDF_MIME_TYPE = "application/pdf";
+    private static final String PRODUCER_TOKEN =
+            "test-only-document-producer-token-32-bytes";
 
     @Autowired
     private MockMvc mockMvc;
@@ -63,6 +67,8 @@ class DocumentFileControllerIntegrationTest {
         byte[] content = "docx-bytes".getBytes(StandardCharsets.UTF_8);
 
         String response = mockMvc.perform(post("/api/v1/document-files")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(fileRequest(document.getId(), "cv.docx", content))))
                 .andExpect(status().isCreated())
@@ -86,7 +92,9 @@ class DocumentFileControllerIntegrationTest {
     void getDocumentFileMetadata_WhenExists_ShouldReturnMetadataOnly() throws Exception {
         UUID fileId = createFile(saveDocument().getId(), "cv.docx", "docx-bytes".getBytes(StandardCharsets.UTF_8));
 
-        String response = mockMvc.perform(get("/api/v1/document-files/{id}", fileId))
+        String response = mockMvc.perform(get("/api/v1/document-files/{id}", fileId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(fileId.toString()))
                 .andExpect(jsonPath("$.fileName").value("cv.docx"))
@@ -102,7 +110,9 @@ class DocumentFileControllerIntegrationTest {
         byte[] content = "pdf-bytes".getBytes(StandardCharsets.UTF_8);
         UUID fileId = createFile(saveDocument().getId(), "cv.pdf", content);
 
-        byte[] actual = mockMvc.perform(get("/api/v1/document-files/{id}/download", fileId))
+        byte[] actual = mockMvc.perform(get("/api/v1/document-files/{id}/download", fileId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.CONTENT_TYPE, PDF_MIME_TYPE))
                 .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"cv.pdf\""))
@@ -119,7 +129,9 @@ class DocumentFileControllerIntegrationTest {
         createFile(document.getId(), "cv.docx", "docx-bytes".getBytes(StandardCharsets.UTF_8));
         createFile(document.getId(), "cv.pdf", "pdf-bytes".getBytes(StandardCharsets.UTF_8));
 
-        mockMvc.perform(get("/api/v1/documents/{generatedDocumentId}/files", document.getId()))
+        mockMvc.perform(get("/api/v1/documents/{generatedDocumentId}/files", document.getId())
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(2)))
                 .andExpect(jsonPath("$[0].generatedDocumentId").value(document.getId().toString()));
@@ -137,6 +149,8 @@ class DocumentFileControllerIntegrationTest {
 
         mockMvc.perform(multipart("/api/v1/documents/{generatedDocumentId}/files/upload", document.getId())
                         .file(replacement)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
                         .param("fileType", "DOCX")
                         .param("source", "USER_UPLOADED"))
                 .andExpect(status().isCreated())
@@ -146,12 +160,18 @@ class DocumentFileControllerIntegrationTest {
                 .andExpect(jsonPath("$.active").value(true));
 
         assertFalse(fileRepository.findById(previousFileId).orElseThrow().isActive());
-        mockMvc.perform(get("/api/v1/documents/{generatedDocumentId}/files/latest", document.getId()))
+        mockMvc.perform(get("/api/v1/documents/{generatedDocumentId}/files/latest", document.getId())
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
                 .andExpect(jsonPath("$[0].fileName").value("cv-edited.docx"))
                 .andExpect(jsonPath("$[0].active").value(true));
-        assertTrue(fileRepository.findByGeneratedDocumentIdAndFileTypeAndActiveTrue(document.getId(), FileType.DOCX)
+        assertTrue(fileRepository
+                .findByGeneratedDocumentIdAndGeneratedDocument_UserIdAndFileTypeAndActiveTrue(
+                        document.getId(),
+                        "user-123",
+                        FileType.DOCX)
                 .stream()
                 .allMatch(file -> file.getFileName().equals("cv-edited.docx")));
     }
@@ -183,6 +203,8 @@ class DocumentFileControllerIntegrationTest {
     @Test
     void createDocumentFile_WhenGeneratedDocumentMissing_ShouldReturn404() throws Exception {
         mockMvc.perform(post("/api/v1/document-files")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(fileRequest(
                                 UUID.randomUUID(),
@@ -203,6 +225,8 @@ class DocumentFileControllerIntegrationTest {
 
     private UUID createFile(UUID generatedDocumentId, String fileName, byte[] content) throws Exception {
         String response = mockMvc.perform(post("/api/v1/document-files")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(fileRequest(generatedDocumentId, fileName, content))))
                 .andExpect(status().isCreated())

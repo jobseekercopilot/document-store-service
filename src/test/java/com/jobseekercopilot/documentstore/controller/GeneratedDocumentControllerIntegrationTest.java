@@ -5,6 +5,8 @@ import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
+import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -27,6 +29,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_EACH_TEST_METHOD)
 class GeneratedDocumentControllerIntegrationTest {
 
+    private static final String PRODUCER_TOKEN =
+            "test-only-document-producer-token-32-bytes";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -47,6 +52,8 @@ class GeneratedDocumentControllerIntegrationTest {
                 .build();
 
         mockMvc.perform(post("/api/v1/documents")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
@@ -66,6 +73,8 @@ class GeneratedDocumentControllerIntegrationTest {
                 .build();
 
         mockMvc.perform(post("/api/v1/documents")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest());
@@ -81,7 +90,9 @@ class GeneratedDocumentControllerIntegrationTest {
                 .content("Generated CV content...")
                 .build());
 
-        mockMvc.perform(get("/api/v1/documents/{id}", saved.getId()))
+        mockMvc.perform(get("/api/v1/documents/{id}", saved.getId())
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(saved.getId().toString()))
                 .andExpect(jsonPath("$.title").value("Java Developer CV"));
@@ -89,7 +100,9 @@ class GeneratedDocumentControllerIntegrationTest {
 
     @Test
     void getDocumentById_WhenNotExists_ShouldReturn404() throws Exception {
-        mockMvc.perform(get("/api/v1/documents/{id}", UUID.randomUUID()))
+        mockMvc.perform(get("/api/v1/documents/{id}", UUID.randomUUID())
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isNotFound());
     }
 
@@ -111,7 +124,9 @@ class GeneratedDocumentControllerIntegrationTest {
                 .content("Content 2")
                 .build());
 
-        mockMvc.perform(get("/api/v1/documents/user/{userId}", "user-test"))
+        mockMvc.perform(get("/api/v1/documents/user/{userId}", "user-test")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-test"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(2)));
     }
@@ -134,7 +149,9 @@ class GeneratedDocumentControllerIntegrationTest {
                 .content("Content 2")
                 .build());
 
-        mockMvc.perform(get("/api/v1/documents/user/{userId}/job/{jobId}", "user-test", "job-1"))
+        mockMvc.perform(get("/api/v1/documents/user/{userId}/job/{jobId}", "user-test", "job-1")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-test"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(2)));
     }
@@ -149,7 +166,9 @@ class GeneratedDocumentControllerIntegrationTest {
                 .content("Generated CV content...")
                 .build());
 
-        mockMvc.perform(delete("/api/v1/documents/{id}", saved.getId()))
+        mockMvc.perform(delete("/api/v1/documents/{id}", saved.getId())
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isNoContent());
     }
 }

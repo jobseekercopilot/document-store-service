@@ -22,6 +22,7 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
     public static final String SERVICE_MDC_KEY = "serviceName";
 
     private static final Logger log = LoggerFactory.getLogger(CorrelationIdFilter.class);
+    private static final int MAXIMUM_CORRELATION_ID_LENGTH = 64;
 
     private final String serviceName;
 
@@ -34,7 +35,7 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String correlationId = request.getHeader(HEADER_NAME);
-        if (!StringUtils.hasText(correlationId)) {
+        if (!isSafeCorrelationId(correlationId)) {
             correlationId = UUID.randomUUID().toString();
         }
 
@@ -42,20 +43,66 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
         MDC.put(MDC_KEY, correlationId);
         MDC.put(SERVICE_MDC_KEY, serviceName);
         response.setHeader(HEADER_NAME, correlationId);
+        String route = safeRoute(request.getRequestURI());
 
         try {
-            log.info("service={} request started method={} path={}", serviceName, request.getMethod(), request.getRequestURI());
+            log.info(
+                    "service={} request started method={} route={}",
+                    serviceName,
+                    request.getMethod(),
+                    route);
             filterChain.doFilter(request, response);
         } finally {
             long durationMs = (System.nanoTime() - startedAt) / 1_000_000;
-            log.info("service={} request completed method={} path={} status={} durationMs={}",
+            log.info("service={} request completed method={} route={} status={} durationMs={}",
                     serviceName,
                     request.getMethod(),
-                    request.getRequestURI(),
+                    route,
                     response.getStatus(),
                     durationMs);
             MDC.remove(MDC_KEY);
             MDC.remove(SERVICE_MDC_KEY);
         }
+    }
+
+    private static boolean isSafeCorrelationId(String value) {
+        if (!StringUtils.hasText(value) || value.length() > MAXIMUM_CORRELATION_ID_LENGTH) {
+            return false;
+        }
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (!Character.isLetterOrDigit(character)
+                    && character != '-'
+                    && character != '_'
+                    && character != '.') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static String safeRoute(String requestUri) {
+        if (requestUri == null) {
+            return "unknown";
+        }
+        if (requestUri.startsWith("/api/v1/document-files")) {
+            return "/api/v1/document-files/**";
+        }
+        if (requestUri.startsWith("/api/v1/documents")) {
+            return "/api/v1/documents/**";
+        }
+        if (requestUri.startsWith("/internal/system-data")) {
+            return "/internal/system-data/**";
+        }
+        if (requestUri.startsWith("/actuator/health")) {
+            return "/actuator/health";
+        }
+        if (requestUri.startsWith("/v3/api-docs")) {
+            return "/v3/api-docs/**";
+        }
+        if (requestUri.startsWith("/swagger-ui")) {
+            return "/swagger-ui/**";
+        }
+        return "other";
     }
 }

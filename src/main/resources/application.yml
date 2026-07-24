@@ -33,6 +33,16 @@ management:
       exposure:
         include: health
 
+document-store:
+  security:
+    jwk-set-uri: ${AUTH_JWKS_URI:http://authentication-service:8084/.well-known/jwks.json}
+    issuer: ${DOCUMENT_STORE_JWT_ISSUER:job-seeker-copilot-authentication}
+    audience: ${DOCUMENT_STORE_JWT_AUDIENCE:job-seeker-copilot-services}
+    service-identity:
+      producer-token: ${DOCUMENT_STORE_PRODUCER_TOKEN:}
+      reader-token: ${DOCUMENT_STORE_READER_TOKEN:}
+    environment-data-token: ${ENVIRONMENT_DATA_TOKEN:}
+
 logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{correlationId}] [%X{serviceName}] [%thread] %logger{36} - %msg%n"

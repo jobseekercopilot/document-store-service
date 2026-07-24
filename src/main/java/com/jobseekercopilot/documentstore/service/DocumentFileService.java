@@ -35,14 +35,12 @@ public class DocumentFileService {
     private final ExportedDocumentFileRepository fileRepository;
     private final GeneratedDocumentRepository documentRepository;
 
-    public DocumentFileResponse createDocumentFile(CreateDocumentFileRequest request) {
+    public DocumentFileResponse createDocumentFile(String ownerId, CreateDocumentFileRequest request) {
         long startedAt = System.nanoTime();
-        if (!documentRepository.existsById(request.getGeneratedDocumentId())) {
-            throw new ResourceNotFoundException("Document not found with id: " + request.getGeneratedDocumentId());
-        }
+        requireOwnedDocument(ownerId, request.getGeneratedDocumentId());
         validateFileType(request.getFileType());
         validateFileNameAndMimeType(request.getFileName(), request.getMimeType(), request.getFileType());
-        deactivateCurrentFile(request.getGeneratedDocumentId(), request.getFileType());
+        deactivateCurrentFile(ownerId, request.getGeneratedDocumentId(), request.getFileType());
 
         ExportedDocumentFile saved = fileRepository.save(ExportedDocumentFile.builder()
                 .generatedDocumentId(request.getGeneratedDocumentId())
@@ -53,26 +51,25 @@ public class DocumentFileService {
                 .active(true)
                 .fileContent(Base64.getDecoder().decode(request.getFileContentBase64()))
                 .build());
-        log.info("Generated document file saved fileId={} generatedDocumentId={} fileType={} source={} durationMs={}",
-                saved.getId(),
-                saved.getGeneratedDocumentId(),
+        log.info("Generated document file saved fileType={} source={} durationMs={}",
                 saved.getFileType(),
                 saved.getSource(),
                 (System.nanoTime() - startedAt) / 1_000_000);
         return mapToResponse(saved);
     }
 
-    public DocumentFileResponse uploadReplacementFile(UUID generatedDocumentId, MultipartFile file, FileType fileType,
-                                                       FileSource source) {
+    public DocumentFileResponse uploadReplacementFile(
+            String ownerId,
+            UUID generatedDocumentId,
+            MultipartFile file,
+            FileType fileType,
+            FileSource source) {
         long startedAt = System.nanoTime();
-        log.info("Document file upload received generatedDocumentId={} fileType={} source={} sizeBytes={}",
-                generatedDocumentId,
+        log.info("Document file upload received fileType={} source={} sizeBytes={}",
                 fileType,
                 source,
                 file == null ? 0 : file.getSize());
-        if (!documentRepository.existsById(generatedDocumentId)) {
-            throw new ResourceNotFoundException("Document not found with id: " + generatedDocumentId);
-        }
+        requireOwnedDocument(ownerId, generatedDocumentId);
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file is required");
         }
@@ -83,7 +80,7 @@ public class DocumentFileService {
 
         String fileName = file.getOriginalFilename() == null ? "" : file.getOriginalFilename();
         validateFileNameAndMimeType(fileName, file.getContentType(), fileType);
-        deactivateCurrentFile(generatedDocumentId, fileType);
+        deactivateCurrentFile(ownerId, generatedDocumentId, fileType);
 
         try {
             if (fileType == FileType.DOCX && !hasDocxStructure(file)) {
@@ -98,9 +95,7 @@ public class DocumentFileService {
                     .active(true)
                     .fileContent(file.getBytes())
                     .build());
-            log.info("Document file upload saved fileId={} generatedDocumentId={} fileType={} source={} durationMs={}",
-                    saved.getId(),
-                    generatedDocumentId,
+            log.info("Document file upload saved fileType={} source={} durationMs={}",
                     fileType,
                     source,
                     (System.nanoTime() - startedAt) / 1_000_000);
@@ -130,23 +125,19 @@ public class DocumentFileService {
         return false;
     }
 
-    public DocumentFileResponse getDocumentFileMetadata(UUID id) {
-        return mapToResponse(getDocumentFile(id));
+    public DocumentFileResponse getDocumentFileMetadata(String ownerId, UUID id) {
+        return mapToResponse(getDocumentFile(ownerId, id));
     }
 
-    public ExportedDocumentFile getDocumentFile(UUID id) {
+    public ExportedDocumentFile getDocumentFile(String ownerId, UUID id) {
         long startedAt = System.nanoTime();
-        ExportedDocumentFile file = fileRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Document file not found with id: " + id));
+        ExportedDocumentFile file = fileRepository.findByIdAndGeneratedDocument_UserId(id, ownerId)
+                .orElseThrow(ResourceNotFoundException::documentFileNotFound);
         if (!file.isActive()) {
-            log.warn("Inactive document file download rejected fileId={} generatedDocumentId={}",
-                    id,
-                    file.getGeneratedDocumentId());
-            throw new ResourceNotFoundException("Document file is no longer active: " + id);
+            log.warn("Inactive document file download rejected");
+            throw ResourceNotFoundException.documentFileNotFound();
         }
-        log.info("Document file loaded fileId={} generatedDocumentId={} fileType={} source={} sizeBytes={} durationMs={}",
-                id,
-                file.getGeneratedDocumentId(),
+        log.info("Document file loaded fileType={} source={} sizeBytes={} durationMs={}",
                 file.getFileType(),
                 file.getSource(),
                 file.getFileContent() == null ? 0 : file.getFileContent().length,
@@ -154,37 +145,51 @@ public class DocumentFileService {
         return file;
     }
 
-    public List<DocumentFileResponse> getFilesForDocument(UUID generatedDocumentId) {
-        if (!documentRepository.existsById(generatedDocumentId)) {
-            throw new ResourceNotFoundException("Document not found with id: " + generatedDocumentId);
-        }
-        return fileRepository.findByGeneratedDocumentIdOrderByCreatedAtDesc(generatedDocumentId)
+    public List<DocumentFileResponse> getFilesForDocument(String ownerId, UUID generatedDocumentId) {
+        requireOwnedDocument(ownerId, generatedDocumentId);
+        return fileRepository
+                .findByGeneratedDocumentIdAndGeneratedDocument_UserIdOrderByCreatedAtDesc(
+                        generatedDocumentId,
+                        ownerId)
                 .stream()
                 .map(this::mapToResponse)
                 .toList();
     }
 
-    public List<DocumentFileResponse> getLatestFilesForDocument(UUID generatedDocumentId) {
-        if (!documentRepository.existsById(generatedDocumentId)) {
-            throw new ResourceNotFoundException("Document not found with id: " + generatedDocumentId);
-        }
-        return fileRepository.findByGeneratedDocumentIdAndActiveTrueOrderByUpdatedAtDesc(generatedDocumentId)
+    public List<DocumentFileResponse> getLatestFilesForDocument(
+            String ownerId,
+            UUID generatedDocumentId) {
+        requireOwnedDocument(ownerId, generatedDocumentId);
+        return fileRepository
+                .findByGeneratedDocumentIdAndGeneratedDocument_UserIdAndActiveTrueOrderByUpdatedAtDesc(
+                        generatedDocumentId,
+                        ownerId)
                 .stream()
                 .map(this::mapToResponse)
                 .toList();
     }
 
-    private void deactivateCurrentFile(UUID generatedDocumentId, FileType fileType) {
+    private void deactivateCurrentFile(
+            String ownerId,
+            UUID generatedDocumentId,
+            FileType fileType) {
         List<ExportedDocumentFile> activeFiles =
-                fileRepository.findByGeneratedDocumentIdAndFileTypeAndActiveTrue(generatedDocumentId, fileType);
+                fileRepository
+                        .findByGeneratedDocumentIdAndGeneratedDocument_UserIdAndFileTypeAndActiveTrue(
+                                generatedDocumentId,
+                                ownerId,
+                                fileType);
         activeFiles.forEach(file -> file.setActive(false));
         fileRepository.saveAll(activeFiles);
         if (!activeFiles.isEmpty()) {
-            log.info("Previous active document files deactivated generatedDocumentId={} fileType={} count={}",
-                    generatedDocumentId,
-                    fileType,
-                    activeFiles.size());
+            log.info("Previous active document files deactivated fileType={} count={}",
+                    fileType, activeFiles.size());
         }
+    }
+
+    private void requireOwnedDocument(String ownerId, UUID generatedDocumentId) {
+        documentRepository.findByIdAndUserId(generatedDocumentId, ownerId)
+                .orElseThrow(ResourceNotFoundException::documentNotFound);
     }
 
     private void validateFileType(FileType fileType) {

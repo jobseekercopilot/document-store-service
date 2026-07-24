@@ -3,6 +3,7 @@ package com.jobseekercopilot.documentstore.systemdata;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -19,6 +20,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/internal/system-data")
+@SecurityRequirement(name = "environmentDataToken")
 public class DocumentStoreSystemDataController {
     private final EnvironmentDataGuard guard;
     private final GeneratedDocumentRepository documentRepository;

@@ -3,9 +3,10 @@
 Persistence service for generated CV and cover-letter text, version metadata,
 and exported DOCX/PDF bytes.
 
-This migration baseline is **not beta-ready**. The current API does not
-authenticate callers or enforce document ownership, uses an in-memory H2
-database with an exposed console, and lacks production retention, encryption,
+This service is **not beta-ready**. Its producer-side API now authenticates
+callers and enforces document/file ownership, but the approved consumers and
+Infrastructure have not completed identity rollout. It also uses an in-memory
+H2 database with an exposed console and lacks production retention, encryption,
 migrations, concurrency controls, and bounded content rules. See
 [`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md).
 
@@ -30,8 +31,13 @@ remain required.
 
 ## API contract
 
-[`contracts/openapi.json`](contracts/openapi.json) is the migration-time
-OpenAPI snapshot.
+[`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
+1.1.0 contract. Maven verification fails when the running contract drifts from
+this file.
+
+The identity sources, least-privilege service roles, authorization matrix,
+stable denial rules and deployment dependencies are defined in
+[`docs/AUTHORIZATION_BOUNDARY.md`](docs/AUTHORIZATION_BOUNDARY.md).
 
 ## Build
 
@@ -39,8 +45,16 @@ OpenAPI snapshot.
 mvn -B clean verify
 ```
 
-The clean migration snapshot passed 14 tests. Passing tests do not resolve the
-document ownership and production-storage blockers.
+The STORE-01 suite includes real JWKS access-token validation, service-role
+isolation, owner-scoped repository queries, foreign/missing UUID equivalence,
+environment-data isolation and contract drift checks. Passing it does not
+resolve the consumer rollout or production-storage blockers.
+
+To intentionally refresh the contract after reviewing an API change:
+
+```bash
+mvn -B -Dtest=OpenApiExportTest -DdocumentStore.updateContract=true test
+```
 
 ## Safe local use
 

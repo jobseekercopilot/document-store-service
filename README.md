@@ -13,6 +13,13 @@ The bounded generated-document cleanup dependency from Job Finder, and the
 separation from normal search aggregation, are defined in the Infrastructure
 [Job Search architecture ADR](https://github.com/jobseekercopilot/infrastructure/blob/develop/docs/adr/0001-job-search-architecture-and-ownership.md).
 
+The source-backed document journey, systems of record, trust boundaries,
+functional readiness classification and beta test matrix are defined in
+[`docs/adr/0001-document-architecture-and-ownership.md`](docs/adr/0001-document-architecture-and-ownership.md).
+The ADR is the approved implementation boundary, not a beta-readiness claim;
+its linked security, persistence, lifecycle, export, client and E2E issues
+remain required.
+
 ## Technology
 
 - Java 17

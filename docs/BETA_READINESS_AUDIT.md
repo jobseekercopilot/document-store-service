@@ -4,6 +4,15 @@ Audit date: 2026-07-23
 
 Status: **Not ready for private beta**
 
+## Cross-repository ownership decision
+
+The source-backed current flow, target systems of record, trust boundaries,
+functional classification, dependency order and executable test matrix are
+published in
+[`docs/adr/0001-document-architecture-and-ownership.md`](adr/0001-document-architecture-and-ownership.md).
+That decision resolves DOC-01's architecture boundary but does not close any
+linked implementation blocker or make this service beta-ready.
+
 ## Verified responsibility
 
 The service stores generated CV/cover-letter text and metadata in

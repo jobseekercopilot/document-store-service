@@ -9,6 +9,10 @@ database with an exposed console, and lacks production retention, encryption,
 migrations, concurrency controls, and bounded content rules. See
 [`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md).
 
+The bounded generated-document cleanup dependency from Job Finder, and the
+separation from normal search aggregation, are defined in the Infrastructure
+[Job Search architecture ADR](https://github.com/jobseekercopilot/infrastructure/blob/develop/docs/adr/0001-job-search-architecture-and-ownership.md).
+
 ## Technology
 
 - Java 17

@@ -9,7 +9,7 @@
     "license" : {
       "name" : "Proprietary and confidential"
     },
-    "version" : "1.4.0"
+    "version" : "2.0.0"
   },
   "servers" : [ {
     "url" : "http://localhost:8089",
@@ -254,7 +254,8 @@
     "/api/v1/documents/applications/{applicationId}/deactivate" : {
       "post" : {
         "tags" : [ "Generated Documents" ],
-        "summary" : "Deactivate all documents for an application",
+        "summary" : "Deprecated compatibility no-op",
+        "description" : "Current document selection is independent of application lifecycle.",
         "operationId" : "deactivateApplicationDocuments",
         "parameters" : [ {
           "name" : "applicationId",
@@ -277,6 +278,7 @@
             "description" : "OK"
           }
         },
+        "deprecated" : true,
         "security" : [ {
           "bearerAuth" : [ ]
         }, {
@@ -370,6 +372,86 @@
           }
         },
         "security" : [ {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/api/v1/documents/{documentId}/current" : {
+      "patch" : {
+        "tags" : [ "Generated Documents" ],
+        "summary" : "Select an approved version as the current family version",
+        "operationId" : "selectCurrentDocumentVersion",
+        "parameters" : [ {
+          "name" : "documentId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/GeneratedDocumentResponse"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        }, {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/api/v1/documents/{documentId}/approve" : {
+      "patch" : {
+        "tags" : [ "Generated Documents" ],
+        "summary" : "Explicitly approve a draft and select it as current",
+        "operationId" : "approveDocumentVersion",
+        "parameters" : [ {
+          "name" : "documentId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/GeneratedDocumentResponse"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        }, {
           "serviceToken" : [ ]
         } ]
       }
@@ -591,6 +673,66 @@
           },
           "204" : {
             "description" : "Document deleted successfully"
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        }, {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/api/v1/documents/{id}/reference" : {
+      "get" : {
+        "tags" : [ "Generated Documents" ],
+        "summary" : "Get an approved immutable document-version reference",
+        "operationId" : "getDocumentReference",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "404" : {
+            "description" : "Document not found for owner",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentReferenceResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Document is not approved",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentReferenceResponse"
+                }
+              }
+            }
+          },
+          "200" : {
+            "description" : "Approved document reference found",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentReferenceResponse"
+                }
+              }
+            }
           }
         },
         "security" : [ {
@@ -989,6 +1131,10 @@
           "applicationId" : {
             "type" : "string"
           },
+          "documentFamilyId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
           "documentType" : {
             "type" : "string",
             "enum" : [ "CV", "COVER_LETTER" ]
@@ -1005,6 +1151,23 @@
           },
           "active" : {
             "type" : "boolean"
+          },
+          "lifecycleState" : {
+            "type" : "string",
+            "enum" : [ "DRAFT", "APPROVED" ]
+          },
+          "contentSha256" : {
+            "type" : "string"
+          },
+          "generationProvenance" : {
+            "$ref" : "#/components/schemas/GenerationProvenance"
+          },
+          "approvedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "approvedBy" : {
+            "type" : "string"
           },
           "currentSlot" : {
             "type" : "integer",
@@ -1033,6 +1196,50 @@
           "updatedAt" : {
             "type" : "string",
             "format" : "date-time"
+          }
+        }
+      },
+      "GenerationProvenance" : {
+        "type" : "object",
+        "properties" : {
+          "releaseId" : {
+            "type" : "string"
+          },
+          "bundleId" : {
+            "type" : "string"
+          },
+          "bundleVersion" : {
+            "type" : "string"
+          },
+          "bundleSha256" : {
+            "type" : "string"
+          },
+          "templateVersion" : {
+            "type" : "string"
+          },
+          "templateSha256" : {
+            "type" : "string"
+          },
+          "rulesVersion" : {
+            "type" : "string"
+          },
+          "rulesSha256" : {
+            "type" : "string"
+          },
+          "schemaId" : {
+            "type" : "string"
+          },
+          "schemaVersion" : {
+            "type" : "string"
+          },
+          "schemaSha256" : {
+            "type" : "string"
+          },
+          "evaluationPolicyVersion" : {
+            "type" : "string"
+          },
+          "evaluationPolicySha256" : {
+            "type" : "string"
           }
         }
       },
@@ -1160,6 +1367,11 @@
             "description" : "ID of the application this document version belongs to",
             "example" : "550e8400-e29b-41d4-a716-446655440000"
           },
+          "documentFamilyId" : {
+            "type" : "string",
+            "description" : "Stable family ID when creating a replacement or regenerated version",
+            "format" : "uuid"
+          },
           "documentType" : {
             "type" : "string",
             "description" : "Type of document",
@@ -1178,14 +1390,14 @@
           },
           "version" : {
             "type" : "integer",
-            "description" : "Version number for this application/document type",
+            "description" : "Expected next version in the document family",
             "format" : "int32",
             "example" : 2
           },
           "active" : {
             "type" : "boolean",
-            "description" : "Whether this version is active",
-            "example" : false
+            "description" : "Deprecated compatibility field; drafts cannot be current at creation",
+            "deprecated" : true
           },
           "originalFilename" : {
             "type" : "string",
@@ -1198,6 +1410,9 @@
             "example" : "UPLOADED",
             "enum" : [ "GENERATED", "UPLOADED", "GENERATED", "UPLOADED" ]
           },
+          "generationMetadata" : {
+            "$ref" : "#/components/schemas/GenerationMetadata"
+          },
           "createdBy" : {
             "type" : "string",
             "description" : "User or service that created this document",
@@ -1205,6 +1420,62 @@
           }
         },
         "description" : "Request to create a new generated document"
+      },
+      "GenerationMetadata" : {
+        "required" : [ "bundleId", "bundleSha256", "bundleVersion", "evaluationPolicySha256", "evaluationPolicyVersion", "releaseId", "rulesSha256", "rulesVersion", "schemaId", "schemaSha256", "schemaVersion", "templateSha256", "templateVersion" ],
+        "type" : "object",
+        "properties" : {
+          "releaseId" : {
+            "type" : "string"
+          },
+          "bundleId" : {
+            "type" : "string"
+          },
+          "bundleVersion" : {
+            "pattern" : "^\\d+\\.\\d+\\.\\d+$",
+            "type" : "string"
+          },
+          "bundleSha256" : {
+            "pattern" : "^[0-9a-f]{64}$",
+            "type" : "string"
+          },
+          "templateVersion" : {
+            "pattern" : "^\\d+\\.\\d+\\.\\d+$",
+            "type" : "string"
+          },
+          "templateSha256" : {
+            "pattern" : "^[0-9a-f]{64}$",
+            "type" : "string"
+          },
+          "rulesVersion" : {
+            "pattern" : "^\\d+\\.\\d+\\.\\d+$",
+            "type" : "string"
+          },
+          "rulesSha256" : {
+            "pattern" : "^[0-9a-f]{64}$",
+            "type" : "string"
+          },
+          "schemaId" : {
+            "type" : "string"
+          },
+          "schemaVersion" : {
+            "pattern" : "^\\d+\\.\\d+\\.\\d+$",
+            "type" : "string"
+          },
+          "schemaSha256" : {
+            "pattern" : "^[0-9a-f]{64}$",
+            "type" : "string"
+          },
+          "evaluationPolicyVersion" : {
+            "pattern" : "^\\d+\\.\\d+\\.\\d+$",
+            "type" : "string"
+          },
+          "evaluationPolicySha256" : {
+            "pattern" : "^[0-9a-f]{64}$",
+            "type" : "string"
+          }
+        },
+        "description" : "Non-PII identifiers and hashes for the generation resources used"
       },
       "GeneratedDocumentResponse" : {
         "type" : "object",
@@ -1229,6 +1500,11 @@
             "type" : "string",
             "description" : "ID of the application this document version belongs to"
           },
+          "documentFamilyId" : {
+            "type" : "string",
+            "description" : "Stable identifier shared by all versions of this document",
+            "format" : "uuid"
+          },
           "documentType" : {
             "type" : "string",
             "description" : "Type of document",
@@ -1247,12 +1523,35 @@
           },
           "version" : {
             "type" : "integer",
-            "description" : "Version number for this application/document type",
+            "description" : "Immutable version number within the document family",
             "format" : "int32"
           },
           "active" : {
             "type" : "boolean",
-            "description" : "Whether this document version is active"
+            "description" : "Deprecated alias for current",
+            "deprecated" : true
+          },
+          "current" : {
+            "type" : "boolean",
+            "description" : "Whether this approved version is selected for future use"
+          },
+          "lifecycleState" : {
+            "type" : "string",
+            "enum" : [ "DRAFT", "APPROVED" ]
+          },
+          "contentSha256" : {
+            "type" : "string",
+            "description" : "SHA-256 of the stored text content"
+          },
+          "generationMetadata" : {
+            "$ref" : "#/components/schemas/GenerationMetadata"
+          },
+          "approvedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "approvedBy" : {
+            "type" : "string"
           },
           "originalFilename" : {
             "type" : "string",
@@ -1417,6 +1716,47 @@
           }
         },
         "description" : "Request to store an exported document file"
+      },
+      "DocumentReferenceResponse" : {
+        "type" : "object",
+        "properties" : {
+          "documentId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "documentFamilyId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "jobId" : {
+            "type" : "string"
+          },
+          "applicationId" : {
+            "type" : "string"
+          },
+          "documentType" : {
+            "type" : "string",
+            "enum" : [ "CV", "COVER_LETTER" ]
+          },
+          "version" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "contentSha256" : {
+            "type" : "string"
+          },
+          "lifecycleState" : {
+            "type" : "string",
+            "enum" : [ "DRAFT", "APPROVED" ]
+          },
+          "current" : {
+            "type" : "boolean"
+          },
+          "generationMetadata" : {
+            "$ref" : "#/components/schemas/GenerationMetadata"
+          }
+        },
+        "description" : "Owner-scoped immutable document-version reference without document content"
       }
     },
     "securitySchemes" : {

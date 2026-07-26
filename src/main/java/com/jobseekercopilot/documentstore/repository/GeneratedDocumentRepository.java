@@ -26,6 +26,14 @@ public interface GeneratedDocumentRepository extends JpaRepository<GeneratedDocu
 
     List<GeneratedDocument> findByDocumentType(DocumentType documentType);
 
+    Optional<GeneratedDocument> findFirstByDocumentFamilyIdAndUserIdOrderByVersionDesc(
+            UUID documentFamilyId,
+            String userId);
+
+    List<GeneratedDocument> findByDocumentFamilyIdAndActiveTrueAndUserId(
+            UUID documentFamilyId,
+            String userId);
+
     Optional<GeneratedDocument> findFirstByApplicationIdAndDocumentTypeAndUserIdOrderByVersionDesc(
             String applicationId,
             DocumentType documentType,

@@ -1,6 +1,7 @@
 package com.jobseekercopilot.documentstore.controller;
 
 import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
+import com.jobseekercopilot.documentstore.dto.DocumentReferenceResponse;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
@@ -81,6 +82,24 @@ public class GeneratedDocumentController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/{id}/reference")
+    @Operation(summary = "Get an approved immutable document-version reference")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Approved document reference found"),
+            @ApiResponse(responseCode = "404", description = "Document not found for owner"),
+            @ApiResponse(responseCode = "409", description = "Document is not approved")
+    })
+    public ResponseEntity<DocumentReferenceResponse> getDocumentReference(
+            @PathVariable UUID id,
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(service.getDocumentReference(ownerId, id));
+    }
+
     @GetMapping("/user/{userId}")
     @Operation(summary = "Get documents by user ID")
     @SecurityRequirement(name = "bearerAuth")
@@ -158,8 +177,37 @@ public class GeneratedDocumentController {
                 documentId));
     }
 
+    @PatchMapping("/{documentId}/approve")
+    @Operation(summary = "Explicitly approve a draft and select it as current")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
+    public ResponseEntity<GeneratedDocumentResponse> approveDocumentVersion(
+            @PathVariable UUID documentId,
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(service.approveDocumentVersion(ownerId, documentId));
+    }
+
+    @PatchMapping("/{documentId}/current")
+    @Operation(summary = "Select an approved version as the current family version")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
+    public ResponseEntity<GeneratedDocumentResponse> selectCurrentDocumentVersion(
+            @PathVariable UUID documentId,
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(service.selectCurrentDocumentVersion(ownerId, documentId));
+    }
+
     @PostMapping("/applications/{applicationId}/deactivate")
-    @Operation(summary = "Deactivate all documents for an application")
+    @Operation(
+            summary = "Deprecated compatibility no-op",
+            description = "Current document selection is independent of application lifecycle.",
+            deprecated = true)
     @SecurityRequirement(name = "bearerAuth")
     @SecurityRequirement(name = "serviceToken")
     public ResponseEntity<Void> deactivateApplicationDocuments(

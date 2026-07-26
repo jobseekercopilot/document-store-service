@@ -7,6 +7,7 @@ import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
 import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
 import com.jobseekercopilot.documentstore.dto.DocumentFileResponse;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
+import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.exception.OperationConflictException;
@@ -44,6 +45,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class PostgresDocumentVersioningIntegrationTest {
     private static final String OWNER = "version-owner";
     private static final String APPLICATION = "version-application";
+    private static final UUID DOCUMENT_FAMILY =
+            UUID.fromString("80fa62d9-2f4f-43ea-9de7-2215538cfc42");
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES =
@@ -91,7 +94,7 @@ class PostgresDocumentVersioningIntegrationTest {
     }
 
     @Test
-    void concurrentDocumentCreatesAllocateUniqueVersionsAndOneCurrentVersion()
+    void concurrentDocumentCreatesAllocateUniqueFamilyVersionsAndApprovalSelectsOneCurrentVersion()
             throws Exception {
         List<GeneratedDocumentResponse> results = concurrently(
                 8,
@@ -104,8 +107,17 @@ class PostgresDocumentVersioningIntegrationTest {
                 .extracting(GeneratedDocumentResponse::getVersion)
                 .containsExactlyInAnyOrder(1, 2, 3, 4, 5, 6, 7, 8);
         assertThat(documentRepository
-                        .findByApplicationIdAndDocumentTypeAndActiveTrueAndUserId(
-                                APPLICATION, DocumentType.CV, OWNER))
+                        .findByDocumentFamilyIdAndActiveTrueAndUserId(
+                                DOCUMENT_FAMILY, OWNER))
+                .isEmpty();
+
+        results.stream()
+                .sorted(java.util.Comparator.comparing(GeneratedDocumentResponse::getVersion))
+                .forEach(result -> documentService.approveDocumentVersion(
+                        OWNER, result.getId()));
+        assertThat(documentRepository
+                        .findByDocumentFamilyIdAndActiveTrueAndUserId(
+                                DOCUMENT_FAMILY, OWNER))
                 .singleElement()
                 .extracting(document -> document.getVersion())
                 .isEqualTo(8);
@@ -217,6 +229,8 @@ class PostgresDocumentVersioningIntegrationTest {
     void failedReplacementRollsBackCurrentSelectionAndDatabaseEnforcesInvariants() {
         GeneratedDocumentResponse current = documentService.createDocument(
                 OWNER, documentRequest("stable-current"), "stable-operation");
+        current = documentService.approveDocumentVersion(OWNER, current.getId());
+        UUID currentId = current.getId();
         CreateDocumentRequest invalid = documentRequest("invalid-next");
         invalid.setTitle(null);
 
@@ -228,34 +242,36 @@ class PostgresDocumentVersioningIntegrationTest {
                                 APPLICATION, DocumentType.CV, OWNER))
                 .singleElement()
                 .extracting(document -> document.getId())
-                .isEqualTo(current.getId());
+                .isEqualTo(currentId);
 
         LocalDateTime now = LocalDateTime.now();
         assertThatThrownBy(() -> jdbcTemplate.update(
                         """
                         INSERT INTO generated_documents (
-                            id, user_id, job_id, application_id, document_type,
+                            id, user_id, job_id, application_id, document_family_id, document_type,
                             title, content, version, active, current_slot,
-                            source_type, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            lifecycle_state, source_type, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         UUID.randomUUID(),
                         OWNER,
                         "duplicate-job",
                         APPLICATION,
+                        DOCUMENT_FAMILY,
                         "CV",
                         "Duplicate version",
                         "Must be rejected",
                         1,
                         false,
                         null,
+                        "DRAFT",
                         "GENERATED",
                         now,
                         now))
                 .isInstanceOf(DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbcTemplate.update(
                         "UPDATE generated_documents SET current_slot = NULL WHERE id = ?",
-                        current.getId()))
+                        currentId))
                 .isInstanceOf(DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbcTemplate.update(
                         """
@@ -263,7 +279,7 @@ class PostgresDocumentVersioningIntegrationTest {
                         SET operation_key = 'missing-fingerprint', request_sha256 = NULL
                         WHERE id = ?
                         """,
-                        current.getId()))
+                        currentId))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -272,10 +288,30 @@ class PostgresDocumentVersioningIntegrationTest {
                 .userId(OWNER)
                 .jobId("version-job")
                 .applicationId(APPLICATION)
+                .documentFamilyId(DOCUMENT_FAMILY)
                 .documentType(DocumentType.CV)
                 .title("Versioned CV")
                 .content(content)
-                .active(true)
+                .generationMetadata(generationMetadata())
+                .build();
+    }
+
+    private GenerationMetadata generationMetadata() {
+        String hash = "a".repeat(64);
+        return GenerationMetadata.builder()
+                .releaseId("release-1")
+                .bundleId("bundle-1")
+                .bundleVersion("1.0.0")
+                .bundleSha256(hash)
+                .templateVersion("1.0.0")
+                .templateSha256(hash)
+                .rulesVersion("1.0.0")
+                .rulesSha256(hash)
+                .schemaId("cv")
+                .schemaVersion("1.0.0")
+                .schemaSha256(hash)
+                .evaluationPolicyVersion("1.0.0")
+                .evaluationPolicySha256(hash)
                 .build();
     }
 

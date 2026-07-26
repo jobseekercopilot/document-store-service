@@ -3,6 +3,7 @@ package com.jobseekercopilot.documentstore.storage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -11,6 +12,17 @@ import org.junit.jupiter.api.io.TempDir;
 class FileSystemDocumentObjectStorageTest {
     @TempDir
     Path root;
+
+    @Test
+    void availabilityCheckFailsWhenTheIsolatedRootDisappears()
+            throws Exception {
+        var storage = new FileSystemDocumentObjectStorage(root);
+        Files.delete(root);
+
+        assertThatThrownBy(storage::checkAvailability)
+                .isInstanceOf(ObjectStorageException.class)
+                .hasMessageContaining("unavailable");
+    }
 
     @Test
     void objectSurvivesAdapterRestartAndCanBeDeleted() {

@@ -7,13 +7,13 @@ import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.exception.ResourceNotFoundException;
+import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -22,18 +22,29 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class GeneratedDocumentService {
 
-    private static final Logger log = LoggerFactory.getLogger(GeneratedDocumentService.class);
-
     private final GeneratedDocumentRepository repository;
     private final DocumentFileLifecycleService fileLifecycleService;
     private final DocumentOperationLock operationLock;
+    private final DocumentStoreMetrics metrics;
 
     @Transactional
     public GeneratedDocumentResponse createDocument(
             String ownerId,
             CreateDocumentRequest request,
             String requestedOperationKey) {
-        long startedAt = System.nanoTime();
+        return metrics.observe(
+                "document",
+                "create",
+                request.getDocumentType(),
+                null,
+                () -> createDocumentInternal(
+                        ownerId, request, requestedOperationKey));
+    }
+
+    private GeneratedDocumentResponse createDocumentInternal(
+            String ownerId,
+            CreateDocumentRequest request,
+            String requestedOperationKey) {
         String operationKey = IdempotencyKeys.validate(requestedOperationKey);
         String applicationId = blankToNull(request.getApplicationId());
         boolean active = request.getActive() == null || request.getActive();
@@ -59,8 +70,6 @@ public class GeneratedDocumentService {
                     .orElse(null);
             if (replay != null) {
                 requireMatchingFingerprint(replay.getRequestSha256(), fingerprint);
-                log.info("Generated document idempotent retry replayed documentType={} version={}",
-                        replay.getDocumentType(), replay.getVersion());
                 return mapToResponse(replay);
             }
         }
@@ -101,36 +110,57 @@ public class GeneratedDocumentService {
                 .build();
 
         GeneratedDocument saved = repository.saveAndFlush(document);
-        log.info("Generated document metadata saved documentType={} titlePresent={} durationMs={}",
+        metrics.recordPayload(
+                "document",
+                "stored",
                 saved.getDocumentType(),
-                saved.getTitle() != null && !saved.getTitle().isBlank(),
-                (System.nanoTime() - startedAt) / 1_000_000);
+                null,
+                textSize(saved.getContent()));
         return mapToResponse(saved);
     }
 
     public GeneratedDocumentResponse getDocumentById(String ownerId, UUID id) {
-        long startedAt = System.nanoTime();
-        GeneratedDocument document = findOwnedDocument(ownerId, id);
-        log.info("Generated document metadata loaded documentType={} durationMs={}",
-                document.getDocumentType(),
-                (System.nanoTime() - startedAt) / 1_000_000);
-        return mapToResponse(document);
+        return metrics.observe("document", "retrieve", null, null, () -> {
+            GeneratedDocument document = findOwnedDocument(ownerId, id);
+            metrics.recordPayload(
+                    "document",
+                    "retrieved",
+                    document.getDocumentType(),
+                    null,
+                    textSize(document.getContent()));
+            return mapToResponse(document);
+        });
     }
 
     public List<GeneratedDocumentResponse> getDocumentsByUserId(String userId) {
-        return repository.findByUserId(userId).stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+        return metrics.observe("document", "list", null, null, () -> {
+            List<GeneratedDocument> documents = repository.findByUserId(userId);
+            recordRetrievedBatch(documents);
+            return documents.stream()
+                    .map(this::mapToResponse)
+                    .collect(Collectors.toList());
+        });
     }
 
     public List<GeneratedDocumentResponse> getDocumentsByUserIdAndJobId(String userId, String jobId) {
-        return repository.findByUserIdAndJobId(userId, jobId).stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+        return metrics.observe("document", "list", null, null, () -> {
+            List<GeneratedDocument> documents =
+                    repository.findByUserIdAndJobId(userId, jobId);
+            recordRetrievedBatch(documents);
+            return documents.stream()
+                    .map(this::mapToResponse)
+                    .collect(Collectors.toList());
+        });
     }
 
     @Transactional
     public void deleteDocument(String ownerId, UUID id) {
+        metrics.observe("document", "delete", null, null, () -> {
+            deleteDocumentInternal(ownerId, id);
+        });
+    }
+
+    private void deleteDocumentInternal(String ownerId, UUID id) {
         GeneratedDocument document = findOwnedDocument(ownerId, id);
         if (document.getApplicationId() != null) {
             operationLock.acquire(lockScope(
@@ -142,11 +172,24 @@ public class GeneratedDocumentService {
         }
         fileLifecycleService.deleteForDocuments(List.of(document.getId()));
         repository.delete(document);
-        log.info("Generated document deleted");
     }
 
     @Transactional
     public GeneratedDocumentResponse activateDocumentVersion(
+            String ownerId,
+            String applicationId,
+            DocumentType documentType,
+            UUID documentId) {
+        return metrics.observe(
+                "document",
+                "activate",
+                documentType,
+                null,
+                () -> activateDocumentVersionInternal(
+                        ownerId, applicationId, documentType, documentId));
+    }
+
+    private GeneratedDocumentResponse activateDocumentVersionInternal(
             String ownerId,
             String applicationId,
             DocumentType documentType,
@@ -167,14 +210,18 @@ public class GeneratedDocumentService {
         deactivateCurrentVersions(ownerId, applicationId, documentType);
         document.setActive(true);
         repository.saveAndFlush(document);
-        log.info("Document version activated documentType={} version={}",
-                documentType,
-                document.getVersion());
         return mapToResponse(document);
     }
 
     @Transactional
     public void deactivateApplicationDocuments(String ownerId, String applicationId) {
+        metrics.observe("document", "deactivate", null, null, () -> {
+            deactivateApplicationDocumentsInternal(ownerId, applicationId);
+        });
+    }
+
+    private void deactivateApplicationDocumentsInternal(
+            String ownerId, String applicationId) {
         if (applicationId == null || applicationId.isBlank()) {
             return;
         }
@@ -186,7 +233,6 @@ public class GeneratedDocumentService {
                 repository.findByApplicationIdAndUserId(applicationId, ownerId);
         documents.forEach(document -> document.setActive(false));
         repository.saveAllAndFlush(documents);
-        log.info("Application documents deactivated count={}", documents.size());
     }
 
     private Integer nextVersion(String ownerId, String applicationId, DocumentType documentType) {
@@ -208,8 +254,13 @@ public class GeneratedDocumentService {
                         applicationId,
                         documentType,
                         ownerId);
+        boolean repairedMultipleActive = activeVersions.size() > 1;
         activeVersions.forEach(activeVersion -> activeVersion.setActive(false));
         repository.saveAllAndFlush(activeVersions);
+        if (repairedMultipleActive) {
+            metrics.recordReconciliation(
+                    "document", "repaired", "multiple_active");
+        }
     }
 
     private void requireMatchingFingerprint(String stored, String requested) {
@@ -249,5 +300,18 @@ public class GeneratedDocumentService {
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private void recordRetrievedBatch(List<GeneratedDocument> documents) {
+        long bytes = documents.stream()
+                .mapToLong(document -> textSize(document.getContent()))
+                .sum();
+        metrics.recordPayload("document", "retrieved", null, null, bytes);
+    }
+
+    private long textSize(String content) {
+        return content == null
+                ? 0
+                : content.getBytes(StandardCharsets.UTF_8).length;
     }
 }

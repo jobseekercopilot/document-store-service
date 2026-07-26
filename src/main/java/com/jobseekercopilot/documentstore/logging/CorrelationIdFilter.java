@@ -81,7 +81,7 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
         return true;
     }
 
-    static String safeRoute(String requestUri) {
+    public static String safeRoute(String requestUri) {
         if (requestUri == null) {
             return "unknown";
         }

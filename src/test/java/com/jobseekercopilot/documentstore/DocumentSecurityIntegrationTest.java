@@ -22,6 +22,7 @@ import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
+import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
@@ -29,6 +30,7 @@ import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
 import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -86,6 +88,9 @@ class DocumentSecurityIntegrationTest {
 
     @Autowired
     private DocumentObjectStorage objectStorage;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     @BeforeEach
     void cleanDatabase() {
@@ -370,6 +375,95 @@ class DocumentSecurityIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.details.files").value(1));
         assertFalse(objectStorage.exists(key));
+    }
+
+    @Test
+    void readinessAndRedactedOperationalMetricsCoverTheDocumentPath()
+            throws Exception {
+        String owner = "observability-owner@example.test";
+
+        mockMvc.perform(get("/actuator/health/liveness"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+        mockMvc.perform(get("/actuator/health/readiness"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+
+        mockMvc.perform(get("/api/v1/documents/user/{userId}", owner))
+                .andExpect(status().isUnauthorized());
+
+        MvcResult created = mockMvc.perform(post("/api/v1/documents")
+                        .header(HttpHeaders.AUTHORIZATION, authorization(owner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                documentRequest(owner))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        UUID documentId = UUID.fromString(objectMapper.readTree(
+                        created.getResponse().getContentAsString())
+                .path("id")
+                .asText());
+
+        mockMvc.perform(get("/api/v1/documents/{id}", documentId)
+                        .header(HttpHeaders.AUTHORIZATION, authorization(owner)))
+                .andExpect(status().isOk());
+
+        MvcResult fileCreated = mockMvc.perform(post("/api/v1/document-files")
+                        .header(
+                                DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, owner)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                fileRequest(documentId))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        UUID fileId = UUID.fromString(objectMapper.readTree(
+                        fileCreated.getResponse().getContentAsString())
+                .path("id")
+                .asText());
+
+        mockMvc.perform(get("/api/v1/document-files/{id}/download", fileId)
+                        .header(HttpHeaders.AUTHORIZATION, authorization(owner)))
+                .andExpect(status().isOk());
+
+        assertTrue(meterRegistry.get(DocumentStoreMetrics.OPERATION_COUNT)
+                .tags(
+                        "resource", "document",
+                        "operation", "create",
+                        "outcome", "success",
+                        "reason", "none",
+                        "document_type", "cv",
+                        "file_type", "unknown")
+                .counter()
+                .count() >= 1);
+        assertTrue(meterRegistry.get(DocumentStoreMetrics.OPERATION_COUNT)
+                .tags(
+                        "resource", "file",
+                        "operation", "store_export",
+                        "outcome", "success",
+                        "reason", "none",
+                        "document_type", "unknown",
+                        "file_type", "pdf")
+                .counter()
+                .count() >= 1);
+        assertTrue(meterRegistry.get(DocumentStoreMetrics.ACCESS_DENIED_COUNT)
+                .tags(
+                        "route", "/api/v1/documents/**",
+                        "reason", "authentication_required")
+                .counter()
+                .count() >= 1);
+        assertTrue(meterRegistry.get(DocumentStoreMetrics.PAYLOAD_SIZE)
+                .tags(
+                        "resource", "file",
+                        "direction", "retrieved",
+                        "document_type", "unknown",
+                        "file_type", "pdf")
+                .summary()
+                .count() >= 1);
+        meterRegistry.getMeters().forEach(meter ->
+                meter.getId().getTags().forEach(tag ->
+                        assertFalse(tag.getValue().contains(owner))));
     }
 
     private void assertAuthenticationFailure(String token) throws Exception {

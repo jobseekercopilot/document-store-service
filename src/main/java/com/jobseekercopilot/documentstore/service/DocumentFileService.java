@@ -9,6 +9,7 @@ import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
 import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.exception.ResourceNotFoundException;
+import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
@@ -37,13 +38,26 @@ public class DocumentFileService {
     private final DocumentObjectStorage objectStorage;
     private final DocumentFileValidator fileValidator;
     private final DocumentOperationLock operationLock;
+    private final DocumentStoreMetrics metrics;
 
     @Transactional
     public DocumentFileResponse createDocumentFile(
             String ownerId,
             CreateDocumentFileRequest request,
             String requestedOperationKey) {
-        long startedAt = System.nanoTime();
+        return metrics.observe(
+                "file",
+                "store_export",
+                null,
+                request.getFileType(),
+                () -> createDocumentFileInternal(
+                        ownerId, request, requestedOperationKey));
+    }
+
+    private DocumentFileResponse createDocumentFileInternal(
+            String ownerId,
+            CreateDocumentFileRequest request,
+            String requestedOperationKey) {
         requireOwnedDocument(ownerId, request.getGeneratedDocumentId());
         byte[] content = fileValidator.decodeAndValidateGenerated(
                 request.getFileType(),
@@ -57,10 +71,12 @@ public class DocumentFileService {
                 FileSource.GENERATED,
                 content,
                 requestedOperationKey);
-        log.info("Generated document file saved fileType={} source={} durationMs={}",
+        metrics.recordPayload(
+                "file",
+                "stored",
+                null,
                 saved.getFileType(),
-                saved.getSource(),
-                (System.nanoTime() - startedAt) / 1_000_000);
+                content.length);
         return mapToResponse(saved);
     }
 
@@ -72,11 +88,27 @@ public class DocumentFileService {
             FileType fileType,
             FileSource source,
             String requestedOperationKey) {
-        long startedAt = System.nanoTime();
-        log.info("Document file upload received fileType={} source={} sizeBytes={}",
+        return metrics.observe(
+                "file",
+                "replace_export",
+                null,
                 fileType,
-                source,
-                file == null ? 0 : file.getSize());
+                () -> uploadReplacementFileInternal(
+                        ownerId,
+                        generatedDocumentId,
+                        file,
+                        fileType,
+                        source,
+                        requestedOperationKey));
+    }
+
+    private DocumentFileResponse uploadReplacementFileInternal(
+            String ownerId,
+            UUID generatedDocumentId,
+            MultipartFile file,
+            FileType fileType,
+            FileSource source,
+            String requestedOperationKey) {
         requireOwnedDocument(ownerId, generatedDocumentId);
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file is required");
@@ -98,10 +130,12 @@ public class DocumentFileService {
                     source,
                     content,
                     requestedOperationKey);
-            log.info("Document file upload saved fileType={} source={} durationMs={}",
+            metrics.recordPayload(
+                    "file",
+                    "stored",
+                    null,
                     fileType,
-                    source,
-                    (System.nanoTime() - startedAt) / 1_000_000);
+                    content.length);
             return mapToResponse(saved);
         } catch (IOException exception) {
             throw new IllegalArgumentException("Unable to read uploaded file");
@@ -109,11 +143,25 @@ public class DocumentFileService {
     }
 
     public DocumentFileResponse getDocumentFileMetadata(String ownerId, UUID id) {
-        return mapToResponse(findActiveDocumentFile(ownerId, id));
+        return metrics.observe(
+                "file",
+                "retrieve_export",
+                null,
+                null,
+                () -> mapToResponse(findActiveDocumentFile(ownerId, id)));
     }
 
     public DocumentFileDownload downloadDocumentFile(String ownerId, UUID id) {
-        long startedAt = System.nanoTime();
+        return metrics.observe(
+                "file",
+                "retrieve_export",
+                null,
+                null,
+                () -> downloadDocumentFileInternal(ownerId, id));
+    }
+
+    private DocumentFileDownload downloadDocumentFileInternal(
+            String ownerId, UUID id) {
         ExportedDocumentFile file = findActiveDocumentFile(ownerId, id);
         byte[] content = objectStorage.get(file.getStorageKey());
         String actualSha256 = ObjectIntegrity.sha256(content);
@@ -132,11 +180,12 @@ public class DocumentFileService {
             log.error("Document object safety validation failed");
             throw new ObjectStorageException("Document object failed safety validation");
         }
-        log.info("Document file loaded fileType={} source={} sizeBytes={} durationMs={}",
+        metrics.recordPayload(
+                "file",
+                "retrieved",
+                null,
                 file.getFileType(),
-                file.getSource(),
-                content.length,
-                (System.nanoTime() - startedAt) / 1_000_000);
+                content.length);
         return new DocumentFileDownload(
                 fileValidator.safeFileName(file.getId(), file.getFileType()),
                 fileValidator.canonicalMimeType(file.getFileType()),
@@ -147,38 +196,51 @@ public class DocumentFileService {
         ExportedDocumentFile file = fileRepository.findByIdAndGeneratedDocument_UserId(id, ownerId)
                 .orElseThrow(ResourceNotFoundException::documentFileNotFound);
         if (!file.isActive() || file.getStorageStatus() != ObjectStorageStatus.AVAILABLE) {
-            log.warn("Inactive or unavailable document file access rejected");
             throw ResourceNotFoundException.documentFileNotFound();
         }
         return file;
     }
 
     public List<DocumentFileResponse> getFilesForDocument(String ownerId, UUID generatedDocumentId) {
-        requireOwnedDocument(ownerId, generatedDocumentId);
-        return fileRepository
-                .findByGeneratedDocumentIdAndGeneratedDocument_UserIdOrderByCreatedAtDesc(
-                        generatedDocumentId,
-                        ownerId)
-                .stream()
-                .map(this::mapToResponse)
-                .toList();
+        return metrics.observe("file", "list_export", null, null, () -> {
+            requireOwnedDocument(ownerId, generatedDocumentId);
+            return fileRepository
+                    .findByGeneratedDocumentIdAndGeneratedDocument_UserIdOrderByCreatedAtDesc(
+                            generatedDocumentId,
+                            ownerId)
+                    .stream()
+                    .map(this::mapToResponse)
+                    .toList();
+        });
     }
 
     public List<DocumentFileResponse> getLatestFilesForDocument(
             String ownerId,
             UUID generatedDocumentId) {
-        requireOwnedDocument(ownerId, generatedDocumentId);
-        return fileRepository
-                .findByGeneratedDocumentIdAndGeneratedDocument_UserIdAndActiveTrueOrderByUpdatedAtDesc(
-                        generatedDocumentId,
-                        ownerId)
-                .stream()
-                .map(this::mapToResponse)
-                .toList();
+        return metrics.observe("file", "list_export", null, null, () -> {
+            requireOwnedDocument(ownerId, generatedDocumentId);
+            return fileRepository
+                    .findByGeneratedDocumentIdAndGeneratedDocument_UserIdAndActiveTrueOrderByUpdatedAtDesc(
+                            generatedDocumentId,
+                            ownerId)
+                    .stream()
+                    .map(this::mapToResponse)
+                    .toList();
+        });
     }
 
     @Transactional
     public DocumentFileResponse activateFileVersion(String ownerId, UUID fileId) {
+        return metrics.observe(
+                "file",
+                "activate",
+                null,
+                null,
+                () -> activateFileVersionInternal(ownerId, fileId));
+    }
+
+    private DocumentFileResponse activateFileVersionInternal(
+            String ownerId, UUID fileId) {
         ExportedDocumentFile selected = fileRepository
                 .findByIdAndGeneratedDocument_UserId(fileId, ownerId)
                 .orElseThrow(ResourceNotFoundException::documentFileNotFound);
@@ -199,8 +261,6 @@ public class DocumentFileService {
                 ownerId, selected.getGeneratedDocumentId(), selected.getFileType());
         selected.setActive(true);
         ExportedDocumentFile restored = fileRepository.saveAndFlush(selected);
-        log.info("Previous document file version restored fileType={} version={}",
-                restored.getFileType(), restored.getVersion());
         return mapToResponse(restored);
     }
 
@@ -214,11 +274,12 @@ public class DocumentFileService {
                                 generatedDocumentId,
                                 ownerId,
                                 fileType);
+        boolean repairedMultipleActive = activeFiles.size() > 1;
         activeFiles.forEach(file -> file.setActive(false));
         fileRepository.saveAllAndFlush(activeFiles);
-        if (!activeFiles.isEmpty()) {
-            log.info("Previous active document files deactivated fileType={} count={}",
-                    fileType, activeFiles.size());
+        if (repairedMultipleActive) {
+            metrics.recordReconciliation(
+                    "file", "repaired", "multiple_active");
         }
     }
 
@@ -286,6 +347,8 @@ public class DocumentFileService {
             try {
                 objectStorage.delete(storageKey);
             } catch (RuntimeException cleanupFailure) {
+                metrics.recordReconciliation(
+                        "file", "failure", "unexpected");
                 log.error("Document object compensation failed; DOC-08 reconciliation required");
             }
             throw exception;

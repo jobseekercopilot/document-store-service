@@ -9,6 +9,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
@@ -19,6 +20,17 @@ public class S3DocumentObjectStorage implements DocumentObjectStorage {
     private final S3Client client;
     private final String bucket;
     private final String kmsKeyId;
+
+    @Override
+    public void checkAvailability() {
+        try {
+            client.headBucket(
+                    HeadBucketRequest.builder().bucket(bucket).build());
+        } catch (SdkException exception) {
+            throw new ObjectStorageException(
+                    "Document object storage is unavailable", exception);
+        }
+    }
 
     @Override
     public void put(String key, byte[] content, String contentType, String sha256) {

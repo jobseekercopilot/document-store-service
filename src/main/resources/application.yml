@@ -38,6 +38,16 @@ spring:
           time_zone: UTC
 
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db,documentStorage
   endpoints:
     web:
       exposure:
@@ -81,5 +91,10 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{correlationId}] [%X{serviceName}] [%thread] %logger{36} - %msg%n"
   level:
     com.jobseekercopilot: ${APP_LOG_LEVEL:INFO}
+    com.zaxxer.hikari: WARN
+    org.flywaydb.core: WARN
     org.hibernate.SQL: "OFF"
     org.hibernate.orm.jdbc.bind: "OFF"
+    org.springframework.jdbc.core: INFO
+    org.springframework.web: INFO
+    org.springframework.web.servlet.handler.HandlerMappingIntrospector: ERROR

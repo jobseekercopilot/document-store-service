@@ -1,5 +1,7 @@
 package com.jobseekercopilot.documentstore.security;
 
+import com.jobseekercopilot.documentstore.logging.CorrelationIdFilter;
+import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
 import jakarta.servlet.http.HttpServletResponse;
 import java.net.URI;
 import java.util.List;
@@ -41,7 +43,8 @@ public class DocumentSecurityConfig {
     @Bean
     SecurityFilterChain documentSecurityFilterChain(
             HttpSecurity http,
-            DocumentServiceIdentityFilter serviceIdentityFilter) throws Exception {
+            DocumentServiceIdentityFilter serviceIdentityFilter,
+            DocumentStoreMetrics metrics) throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
@@ -50,18 +53,28 @@ public class DocumentSecurityConfig {
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(errors -> errors
-                        .authenticationEntryPoint((request, response, exception) ->
+                        .authenticationEntryPoint((request, response, exception) -> {
+                            metrics.recordAccessDenied(
+                                    CorrelationIdFilter.safeRoute(
+                                            request.getRequestURI()),
+                                    "authentication_required");
                                 writeError(
                                         response,
                                         HttpServletResponse.SC_UNAUTHORIZED,
                                         "AUTHENTICATION_REQUIRED",
-                                        "Valid authentication is required."))
-                        .accessDeniedHandler((request, response, exception) ->
+                                        "Valid authentication is required.");
+                        })
+                        .accessDeniedHandler((request, response, exception) -> {
+                            metrics.recordAccessDenied(
+                                    CorrelationIdFilter.safeRoute(
+                                            request.getRequestURI()),
+                                    "access_denied");
                                 writeError(
                                         response,
                                         HttpServletResponse.SC_FORBIDDEN,
                                         "ACCESS_DENIED",
-                                        "Access is denied.")))
+                                        "Access is denied.");
+                        }))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers("/internal/system-data/**")
@@ -91,12 +104,17 @@ public class DocumentSecurityConfig {
                 .addFilterBefore(serviceIdentityFilter, BearerTokenAuthenticationFilter.class)
                 .oauth2ResourceServer(resourceServer -> resourceServer
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
-                        .authenticationEntryPoint((request, response, exception) ->
+                        .authenticationEntryPoint((request, response, exception) -> {
+                            metrics.recordAccessDenied(
+                                    CorrelationIdFilter.safeRoute(
+                                            request.getRequestURI()),
+                                    "authentication_required");
                                 writeError(
                                         response,
                                         HttpServletResponse.SC_UNAUTHORIZED,
                                         "AUTHENTICATION_REQUIRED",
-                                        "Valid authentication is required.")))
+                                        "Valid authentication is required.");
+                        }))
                 .build();
     }
 

@@ -53,6 +53,11 @@ names, quarantine behavior and no-paid-scanner decision are defined in
 The database invariants, PostgreSQL lock boundary, `Idempotency-Key` contract,
 conflict behavior and version restoration API are defined in
 [`docs/VERSION_CONCURRENCY.md`](docs/VERSION_CONCURRENCY.md).
+The low-cardinality metric catalogue, redaction rules, dependency-aware health
+groups, alert thresholds, cost-free synthetic path and privacy-safe incident/
+recovery runbook are defined in
+[`docs/OBSERVABILITY_AND_OPERATIONS.md`](docs/OBSERVABILITY_AND_OPERATIONS.md).
+The repository does not provision paid monitoring infrastructure.
 
 ## Build
 
@@ -70,9 +75,12 @@ migration/application-restart/backup/restore/deletion drill, legacy BYTEA
 upgrade, object restart recovery, SSE-KMS request and checksum quarantine
 evidence, parallel version allocation, idempotent retries, transactional
 rollback and restore, plus malicious/corrupt file rejection and safe-download
-controls.
+controls. It also covers bounded operation metrics, log/metric redaction,
+correlation propagation, database/object-storage readiness and reconciliation
+signals.
 Passing it does not resolve consumer rollout, deployed platform
-evidence, scheduled cross-store reconciliation or governed retention blockers.
+evidence, deployed monitoring, scheduled cross-store reconciliation or
+governed retention blockers.
 
 To intentionally refresh the contract after reviewing an API change:
 

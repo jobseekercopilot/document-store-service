@@ -23,6 +23,16 @@ public class FileSystemDocumentObjectStorage implements DocumentObjectStorage {
     }
 
     @Override
+    public void checkAvailability() {
+        if (!Files.isDirectory(root)
+                || !Files.isReadable(root)
+                || !Files.isWritable(root)) {
+            throw new ObjectStorageException(
+                    "Isolated document object storage is unavailable");
+        }
+    }
+
+    @Override
     public void put(String key, byte[] content, String contentType, String sha256) {
         Path target = resolve(key);
         Path temporary = null;

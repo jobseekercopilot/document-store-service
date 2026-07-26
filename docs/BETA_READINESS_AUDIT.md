@@ -10,6 +10,8 @@ DOC-03 object-storage separation update: 2026-07-26
 
 DOC-05 file-validation update: 2026-07-26
 
+DOC-10 repository observability update: 2026-07-26
+
 Status: **Not ready for private beta**
 
 ## STORE-01 producer boundary
@@ -99,6 +101,26 @@ clean verify`: 61 tests, zero failures, zero errors and zero skipped. The
 source-only Dockerfile also built successfully. This is repository evidence,
 not a production deployment or image-vulnerability scan.
 
+## DOC-10 repository observability boundary
+
+The service now records low-cardinality operation success/failure, duration
+and payload-size metrics for generated documents and object-backed exported
+files. Authentication and authorization denials use redacted route families;
+multiple-active repairs and object-compensation failures emit reconciliation
+signals. Arbitrary metric dimensions collapse instead of creating
+identifier-labelled series.
+
+Liveness is process-only. Readiness requires application readiness, PostgreSQL
+health and a redacted read-path check through `DocumentObjectStorage`. The
+vendor-neutral alert catalogue, cost-free synthetic path and privacy-safe
+incident/recovery runbook are published in
+[`OBSERVABILITY_AND_OPERATIONS.md`](OBSERVABILITY_AND_OPERATIONS.md).
+
+This is repository evidence only. No paid monitoring resource was created.
+DOC-08 must integrate durable reconciliation, while DOCGEN-19 and
+Infrastructure must prove cross-service dashboards, alerts and deployed
+recovery drills.
+
 ## Verified responsibility
 
 The service stores generated CV/cover-letter text in `GeneratedDocument`, file
@@ -147,9 +169,11 @@ deactivated, while exported file replacements mark older files inactive.
    transaction with an enforced single-current marker. Upstream producers
    still need to roll out stable keys under DOCGEN-09.
 7. Deactivation scans all documents in memory for an application.
-8. Application request/service logs now redact stable owner and resource
-    identifiers, but audit-event coverage and log-retention policy remain
-    incomplete.
+8. Application request/service logs and metric labels now redact stable owner
+   and resource identifiers. Operation/denial/reconciliation metrics and
+   database/object-storage readiness exist in the repository, but deployed
+   dashboards, alerts, log retention and immutable audit-event coverage remain
+   incomplete.
 9. Tests now cover authentication, service least privilege, owner and
     cross-user denial, happy-path CRUD/replacement, production configuration,
     PostgreSQL migration/application-restart persistence, backup/restore

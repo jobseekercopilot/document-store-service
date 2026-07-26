@@ -5,11 +5,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.FileType;
+import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter;
+import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -19,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.io.ByteArrayOutputStream;
@@ -32,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -61,6 +65,12 @@ class DocumentFileControllerIntegrationTest {
     @Autowired
     private ExportedDocumentFileRepository fileRepository;
 
+    @Autowired
+    private DocumentObjectStorage objectStorage;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @Test
     void createDocumentFile_ShouldSaveBytesAndReturnMetadataOnly() throws Exception {
         GeneratedDocument document = saveDocument();
@@ -83,9 +93,16 @@ class DocumentFileControllerIntegrationTest {
 
         JsonNode json = objectMapper.readTree(response);
         assertFalse(json.has("fileContentBase64"));
-        assertArrayEquals(content, fileRepository.findById(UUID.fromString(json.get("id").asText()))
-                .orElseThrow()
-                .getFileContent());
+        var stored = fileRepository.findById(UUID.fromString(json.get("id").asText()))
+                .orElseThrow();
+        assertTrue(objectStorage.exists(stored.getStorageKey()));
+        assertArrayEquals(content, objectStorage.get(stored.getStorageKey()));
+        assertTrue(json.get("contentSize").asLong() == content.length);
+        assertTrue(json.get("contentSha256").asText().length() == 64);
+        assertTrue(jdbcTemplate.queryForObject(
+                "SELECT file_content IS NULL FROM exported_document_files WHERE id = ?",
+                Boolean.class,
+                stored.getId()));
     }
 
     @Test
@@ -121,6 +138,52 @@ class DocumentFileControllerIntegrationTest {
                 .getContentAsByteArray();
 
         assertArrayEquals(content, actual);
+    }
+
+    @Test
+    void downloadDocumentFile_WhenObjectIntegrityFails_ShouldReturn503AndQuarantineMetadata()
+            throws Exception {
+        UUID fileId = createFile(
+                saveDocument().getId(),
+                "cv.pdf",
+                "expected-pdf".getBytes(StandardCharsets.UTF_8));
+        var metadata = fileRepository.findById(fileId).orElseThrow();
+        objectStorage.delete(metadata.getStorageKey());
+        byte[] corrupt = "corrupt-pdf".getBytes(StandardCharsets.UTF_8);
+        objectStorage.put(
+                metadata.getStorageKey(),
+                corrupt,
+                PDF_MIME_TYPE,
+                com.jobseekercopilot.documentstore.storage.ObjectIntegrity.sha256(corrupt));
+
+        mockMvc.perform(get("/api/v1/document-files/{id}/download", fileId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message")
+                        .value("Document file storage is temporarily unavailable."));
+
+        assertTrue(fileRepository.findById(fileId).orElseThrow().getStorageStatus()
+                == ObjectStorageStatus.UNAVAILABLE);
+    }
+
+    @Test
+    void deleteDocument_ShouldDeleteObjectAndMetadata() throws Exception {
+        GeneratedDocument document = saveDocument();
+        UUID fileId = createFile(
+                document.getId(),
+                "cv.pdf",
+                "delete-me".getBytes(StandardCharsets.UTF_8));
+        String key = fileRepository.findById(fileId).orElseThrow().getStorageKey();
+
+        mockMvc.perform(delete("/api/v1/documents/{id}", document.getId())
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isNoContent());
+
+        assertFalse(objectStorage.exists(key));
+        assertTrue(fileRepository.findById(fileId).isEmpty());
+        assertTrue(documentRepository.findById(document.getId()).isEmpty());
     }
 
     @Test

@@ -36,9 +36,8 @@ class PostgresStorageRecoveryIntegrationTest {
     @Test
     void migrationRestartBackupRestoreCredentialFailureAndDeletionAreProven()
             throws Exception {
-        Flyway flyway = flyway(POSTGRES.getJdbcUrl());
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
-        flyway.validate();
+        Flyway legacyFlyway = legacyFlyway(POSTGRES.getJdbcUrl());
+        assertThat(legacyFlyway.migrate().migrationsExecuted).isEqualTo(1);
 
         UUID documentId = UUID.randomUUID();
         UUID fileId = UUID.randomUUID();
@@ -62,6 +61,19 @@ class PostgresStorageRecoveryIntegrationTest {
                 .isInstanceOf(SQLException.class)
                 .satisfies(exception ->
                         assertThat(((SQLException) exception).getSQLState()).startsWith("28"));
+
+        // Apply the metadata/object separation migration to an existing BYTEA row.
+        // The bytes remain recoverable as LEGACY_DATABASE until the startup
+        // migrator has durably copied and verified the external object.
+        Flyway flyway = flyway(POSTGRES.getJdbcUrl());
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
+        flyway.validate();
+        try (Connection connection = primaryConnection()) {
+            assertThatThrownBy(() -> markLegacyAvailableWithoutObject(connection, fileId))
+                    .isInstanceOf(SQLException.class)
+                    .extracting(exception -> ((SQLException) exception).getSQLState())
+                    .isEqualTo("23514");
+        }
 
         // Discard all application-side migration and JDBC state, then repeat the
         // startup path against the same durable PostgreSQL database.
@@ -108,6 +120,15 @@ class PostgresStorageRecoveryIntegrationTest {
         return Flyway.configure()
                 .dataSource(jdbcUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
                 .locations("classpath:db/migration/common")
+                .cleanDisabled(true)
+                .load();
+    }
+
+    private Flyway legacyFlyway(String jdbcUrl) {
+        return Flyway.configure()
+                .dataSource(jdbcUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
+                .locations("classpath:db/migration/common")
+                .target("1")
                 .cleanDisabled(true)
                 .load();
     }
@@ -257,6 +278,18 @@ class PostgresStorageRecoveryIntegrationTest {
             assertThat(files.executeUpdate()).isEqualTo(1);
             document.setObject(1, documentId);
             assertThat(document.executeUpdate()).isEqualTo(1);
+        }
+    }
+
+    private void markLegacyAvailableWithoutObject(Connection connection, UUID fileId)
+            throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                UPDATE exported_document_files
+                SET storage_status = 'AVAILABLE'
+                WHERE id = ?
+                """)) {
+            statement.setObject(1, fileId);
+            statement.executeUpdate();
         }
     }
 

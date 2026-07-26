@@ -1,8 +1,8 @@
 package com.jobseekercopilot.documentstore.controller;
 
 import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
+import com.jobseekercopilot.documentstore.dto.DocumentFileDownload;
 import com.jobseekercopilot.documentstore.dto.DocumentFileResponse;
-import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
 import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
@@ -123,14 +123,14 @@ public class DocumentFileController {
             String requestedOwner,
             @Parameter(hidden = true) Authentication authentication) {
         String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
-        ExportedDocumentFile file = service.getDocumentFile(ownerId, id);
+        DocumentFileDownload file = service.downloadDocumentFile(ownerId, id);
         return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(file.getMimeType()))
+                .contentType(MediaType.parseMediaType(file.mimeType()))
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
-                        .filename(file.getFileName())
+                        .filename(file.fileName())
                         .build()
                         .toString())
-                .body(file.getFileContent());
+                .body(file.content());
     }
 
     @GetMapping("/api/v1/documents/{generatedDocumentId}/files")

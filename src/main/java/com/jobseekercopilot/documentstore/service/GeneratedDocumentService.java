@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.UUID;
@@ -23,6 +24,7 @@ public class GeneratedDocumentService {
     private static final Logger log = LoggerFactory.getLogger(GeneratedDocumentService.class);
 
     private final GeneratedDocumentRepository repository;
+    private final DocumentFileLifecycleService fileLifecycleService;
 
     public GeneratedDocumentResponse createDocument(String ownerId, CreateDocumentRequest request) {
         long startedAt = System.nanoTime();
@@ -73,8 +75,11 @@ public class GeneratedDocumentService {
                 .collect(Collectors.toList());
     }
 
+    @Transactional
     public void deleteDocument(String ownerId, UUID id) {
-        repository.delete(findOwnedDocument(ownerId, id));
+        GeneratedDocument document = findOwnedDocument(ownerId, id);
+        fileLifecycleService.deleteForDocuments(List.of(document.getId()));
+        repository.delete(document);
         log.info("Generated document deleted");
     }
 

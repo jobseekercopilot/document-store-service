@@ -10,6 +10,8 @@ DOC-03 object-storage separation update: 2026-07-26
 
 DOC-05 file-validation update: 2026-07-26
 
+DOC-08 storage-reconciliation update: 2026-07-26
+
 Status: **Not ready for private beta**
 
 ## STORE-01 producer boundary
@@ -99,6 +101,37 @@ clean verify`: 61 tests, zero failures, zero errors and zero skipped. The
 source-only Dockerfile also built successfully. This is repository evidence,
 not a production deployment or image-vulnerability scan.
 
+## DOC-08 storage-reconciliation boundary
+
+File writes now reserve a stable file ID, version and opaque object key in a
+durable PostgreSQL journal before calling object storage. File metadata and the
+journal's `COMMITTED` transition share one transaction; an interrupted write
+therefore remains a recoverable `PREPARED` operation rather than an
+unidentifiable object.
+
+The scheduled reconciler completes `DELETE_PENDING` cleanup, rolls back
+uncommitted prepared objects, repairs prepared journals whose metadata did
+commit, quarantines missing/corrupt/unsafe available objects, and detects
+unknown orphan binaries without deleting them. Each category is bounded and
+uses a durable rotating cursor so a persistent failure cannot starve later
+records. A transaction-scoped lock serializes workers. Logs and metrics expose
+fixed aggregate outcomes only.
+
+The state model, AWS prefix/IAM requirement and guarded manual procedure are in
+[`STORAGE_RECONCILIATION.md`](STORAGE_RECONCILIATION.md). Repository evidence
+does not prove deployed ECS task-role binding, S3/KMS controls, CloudWatch
+alerts or paired managed-store recovery. Those remain Infrastructure
+dependencies.
+
+Local verification passed `mvn -B --no-transfer-progress -Ddebug=false clean
+verify`: 87 tests, zero failures, zero errors and zero skipped, including real
+PostgreSQL 15 migration/schema/concurrency/recovery evidence. The packaged
+image built locally and reached healthy twice across a graceful container
+restart against one disposable PostgreSQL database; startup reconciliation
+completed on both runs. All synthetic containers and the isolated network were
+removed. This is repository and local-container evidence, not a deployed AWS
+control.
+
 ## Verified responsibility
 
 The service stores generated CV/cover-letter text in `GeneratedDocument`, file
@@ -132,10 +165,10 @@ deactivated, while exported file replacements mark older files inactive.
    Store bearer/service identity and owner-context contract end to end.
 2. Integrated cross-user tests do not yet cover the complete
    Gateway/CV/Export/Store/Application Tracker journey.
-3. The repository now separates relational metadata and object bytes, but the
-   deployed private bucket, credentials, KMS key, object backup/versioning and
-   restore evidence remain owned by INFRA-08; scheduled cross-store
-   reconciliation remains owned by DOC-08.
+3. The repository now separates relational metadata and object bytes and
+   includes bounded scheduled reconciliation, but the deployed private bucket,
+   ECS task-role credentials, KMS key, alerts, object backup/versioning and
+   restore evidence remain owned by Infrastructure.
 4. There is no draft/final/approved lifecycle, prompt version, model version,
    generation schema version, claim evidence, retention deadline, deletion
    audit, or legal-hold/export state.

@@ -8,4 +8,6 @@ public interface DocumentObjectStorage {
     void delete(String key);
 
     boolean exists(String key);
+
+    ObjectKeyPage listKeys(String prefix, String afterKey, int limit);
 }

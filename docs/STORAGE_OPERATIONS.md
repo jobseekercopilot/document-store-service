@@ -29,8 +29,9 @@ cannot attest that a cloud control plane actually applied the named keys.
 Infrastructure must retain deployment evidence for secret injection, bucket
 privacy/public-access blocking, bucket policy, key ownership and rotation,
 database/backup encryption, object versioning and object backup/replication.
-That external deployment evidence remains owned by INFRA-08. DOC-08 owns
-scheduled reconciliation of the database and object-store resource pair.
+That external deployment evidence remains owned by INFRA-08. The bounded
+database/object-store recovery rules are defined in
+[`STORAGE_RECONCILIATION.md`](STORAGE_RECONCILIATION.md).
 
 ## Required runtime settings
 
@@ -45,10 +46,14 @@ deployment operation: inject the replacement credential, roll the service,
 verify health and revoke the former credential.
 
 The object-store principal must be dedicated to this service and restricted to
-the configured bucket and required get/put/delete/head operations. It must not
-grant public ACL or bucket-policy mutation. Rotate access credentials and the
-KMS key reference through the approved secret/infrastructure workflow. The
-object key contains opaque UUIDs, not usernames, filenames or document text.
+the configured bucket. It needs get/put/delete/head for `documents/*` and
+bucket-level listing restricted by an S3 prefix condition to `documents/`. It
+must not grant public ACL or bucket-policy mutation. The intended AWS
+production binding is an ECS/Fargate task role rather than a long-lived access
+key; that Infrastructure migration remains tracked by INFRA-08. Rotate any
+transitional credentials and the KMS key reference through the approved
+secret/infrastructure workflow. The object key contains opaque UUIDs, not
+usernames, filenames or document text.
 
 ## Migration and release procedure
 
@@ -138,7 +143,10 @@ persistence/recovery evidence.
 - A checksum/size mismatch quarantines metadata as `UNAVAILABLE` and returns a
   stable 503 without returning corrupt bytes.
 - Deletion first commits `DELETE_PENDING`, then removes the object and metadata.
-  If either store fails, leave the row pending and hand it to DOC-08
-  reconciliation; do not manually mark it available.
+  If either store fails, leave the row pending for scheduled reconciliation;
+  do not manually mark it available.
+- Unknown orphan objects are reported but never automatically deleted. Follow
+  the guarded procedure in
+  [`STORAGE_RECONCILIATION.md`](STORAGE_RECONCILIATION.md).
 - Lifecycle deletion, retention, legal hold and user-facing recovery remain
   owned by DOC-09; this runbook proves only the storage-layer synthetic drill.

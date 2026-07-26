@@ -6,6 +6,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
 
 public class FileSystemDocumentObjectStorage implements DocumentObjectStorage {
     private final Path root;
@@ -68,6 +70,34 @@ public class FileSystemDocumentObjectStorage implements DocumentObjectStorage {
     @Override
     public boolean exists(String key) {
         return Files.isRegularFile(resolve(key));
+    }
+
+    @Override
+    public ObjectKeyPage listKeys(String prefix, String afterKey, int limit) {
+        if (prefix == null
+                || prefix.isBlank()
+                || prefix.startsWith("/")
+                || prefix.contains("..")
+                || limit < 1) {
+            throw new ObjectStorageException("Invalid document object listing request");
+        }
+        try (var paths = Files.walk(root)) {
+            List<String> keys = paths
+                    .filter(Files::isRegularFile)
+                    .map(root::relativize)
+                    .map(path -> path.toString().replace(path.getFileSystem().getSeparator(), "/"))
+                    .filter(key -> key.startsWith(prefix))
+                    .filter(key -> afterKey == null || key.compareTo(afterKey) > 0)
+                    .sorted(Comparator.naturalOrder())
+                    .limit((long) limit + 1)
+                    .toList();
+            boolean hasMore = keys.size() > limit;
+            List<String> page = hasMore ? keys.subList(0, limit) : keys;
+            String nextAfterKey = hasMore ? page.get(page.size() - 1) : null;
+            return new ObjectKeyPage(page, nextAfterKey);
+        } catch (IOException exception) {
+            throw new ObjectStorageException("Unable to list document objects", exception);
+        }
     }
 
     private Path resolve(String key) {

@@ -44,6 +44,14 @@ management:
         include: health
 
 document-store:
+  reconciliation:
+    enabled: ${DOCUMENT_STORE_RECONCILIATION_ENABLED:true}
+    run-on-startup: ${DOCUMENT_STORE_RECONCILIATION_RUN_ON_STARTUP:false}
+    batch-size: ${DOCUMENT_STORE_RECONCILIATION_BATCH_SIZE:50}
+    minimum-age-seconds: ${DOCUMENT_STORE_RECONCILIATION_MINIMUM_AGE_SECONDS:300}
+    initial-delay-ms: ${DOCUMENT_STORE_RECONCILIATION_INITIAL_DELAY_MS:60000}
+    fixed-delay-ms: ${DOCUMENT_STORE_RECONCILIATION_FIXED_DELAY_MS:300000}
+    object-prefix: documents/
   validation:
     maximum-file-bytes: ${DOCUMENT_STORE_MAXIMUM_FILE_BYTES:10485760}
     maximum-docx-entries: ${DOCUMENT_STORE_MAXIMUM_DOCX_ENTRIES:256}

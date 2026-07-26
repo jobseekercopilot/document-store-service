@@ -9,6 +9,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
@@ -73,6 +74,33 @@ public class S3DocumentObjectStorage implements DocumentObjectStorage {
             throw new ObjectStorageException("Unable to inspect document object", exception);
         } catch (SdkException exception) {
             throw new ObjectStorageException("Unable to inspect document object", exception);
+        }
+    }
+
+    @Override
+    public ObjectKeyPage listKeys(String prefix, String afterKey, int limit) {
+        if (prefix == null || prefix.isBlank() || limit < 1) {
+            throw new ObjectStorageException("Invalid document object listing request");
+        }
+        try {
+            var requestBuilder = ListObjectsV2Request.builder()
+                    .bucket(bucket)
+                    .prefix(prefix)
+                    .maxKeys(limit);
+            if (afterKey != null && !afterKey.isBlank()) {
+                requestBuilder.startAfter(afterKey);
+            }
+            var request = requestBuilder.build();
+            var response = client.listObjectsV2(request);
+            var keys = response.contents().stream()
+                    .map(object -> object.key())
+                    .toList();
+            String nextAfterKey = Boolean.TRUE.equals(response.isTruncated()) && !keys.isEmpty()
+                    ? keys.get(keys.size() - 1)
+                    : null;
+            return new ObjectKeyPage(keys, nextAfterKey);
+        } catch (SdkException exception) {
+            throw new ObjectStorageException("Unable to list document objects", exception);
         }
     }
 }

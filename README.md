@@ -12,8 +12,8 @@ locking, database uniqueness, retry keys and explicit restoration. Production
 file writes additionally require a
 private S3-compatible bucket and managed SSE-KMS key. Approved consumers and
 Infrastructure have not completed identity, secret/key, bucket and deployment
-rollout, and production retention, cross-store reconciliation and integrated
-consumer idempotency rollout remain open. See
+rollout, and production retention, integrated consumer idempotency and
+deployed reconciliation alerting remain open. See
 [`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md).
 
 The bounded generated-document cleanup dependency from Job Finder, and the
@@ -53,6 +53,9 @@ names, quarantine behavior and no-paid-scanner decision are defined in
 The database invariants, PostgreSQL lock boundary, `Idempotency-Key` contract,
 conflict behavior and version restoration API are defined in
 [`docs/VERSION_CONCURRENCY.md`](docs/VERSION_CONCURRENCY.md).
+The durable storage-operation journal, bounded reconciler, privacy-safe
+metrics and guarded orphan-recovery procedure are defined in
+[`docs/STORAGE_RECONCILIATION.md`](docs/STORAGE_RECONCILIATION.md).
 
 ## Build
 
@@ -72,7 +75,7 @@ evidence, parallel version allocation, idempotent retries, transactional
 rollback and restore, plus malicious/corrupt file rejection and safe-download
 controls.
 Passing it does not resolve consumer rollout, deployed platform
-evidence, scheduled cross-store reconciliation or governed retention blockers.
+evidence, deployed reconciliation alerting or governed retention blockers.
 
 To intentionally refresh the contract after reviewing an API change:
 

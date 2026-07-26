@@ -153,6 +153,7 @@ class ProductionStorageVerifierTest {
                 .withProperty("spring.jpa.hibernate.ddl-auto", "validate")
                 .withProperty("spring.h2.console.enabled", "false")
                 .withProperty("spring.jpa.show-sql", "false")
+                .withProperty("document-store.reconciliation.enabled", "true")
                 .withProperty(
                         "document-store.database.encryption-at-rest-enabled", "true")
                 .withProperty(

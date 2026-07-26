@@ -84,6 +84,11 @@ public class ProductionStorageVerifier implements ApplicationRunner, FlywayMigra
             throw new IllegalStateException(
                     "Reviewed Flyway migrations are required for Document Store");
         }
+        if (!environment.getProperty(
+                "document-store.reconciliation.enabled", Boolean.class, false)) {
+            throw new IllegalStateException(
+                    "Document storage reconciliation must be enabled");
+        }
         if (!environment.getProperty("spring.flyway.clean-disabled", Boolean.class, false)) {
             throw new IllegalStateException("Flyway clean must remain disabled");
         }

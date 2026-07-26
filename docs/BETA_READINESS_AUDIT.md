@@ -4,6 +4,8 @@ Audit date: 2026-07-23
 
 STORE-01 producer update: 2026-07-24
 
+STORE-02 repository storage update: 2026-07-26
+
 Status: **Not ready for private beta**
 
 ## STORE-01 producer boundary
@@ -29,6 +31,25 @@ published in
 That decision resolves DOC-01's architecture boundary but does not close any
 linked implementation blocker or make this service beta-ready.
 
+## STORE-02 durable storage foundation
+
+The runtime no longer has an H2 fallback. It requires PostgreSQL, verified
+database TLS, injected credentials, managed database/backup encryption
+declarations and non-secret key references. Flyway owns schema changes,
+Hibernate is validate-only, Flyway clean is disabled, and H2 plus its console
+are absent from runtime.
+
+The repository test gate migrates a real PostgreSQL 15 container, persists
+synthetic text and bytes, verifies constraint and credential failures, repeats
+the application startup/migration path against the durable database, performs a
+custom-format backup/restore, validates byte checksum integrity and proves
+ordered synthetic deletion. The operational contract is published in
+[`STORAGE_OPERATIONS.md`](STORAGE_OPERATIONS.md).
+
+This is repository evidence, not deployed managed-service evidence. INFRA-08
+still owns secret/key injection, rotation and encryption proof. DOC-03 still
+owns relational metadata/object-storage separation and binary lifecycle.
+
 ## Verified responsibility
 
 The service stores generated CV/cover-letter text and metadata in
@@ -46,8 +67,11 @@ file replacements mark older files inactive.
 - Gitleaks and targeted personal-data checks passed on the source snapshot.
 - `mvn -B clean verify` passed from the clean snapshot: 14 tests, zero
   failures, zero errors, zero skipped.
-- The candidate container built locally, but the image was not deployed or
-  vulnerability-scanned.
+- The current STORE-02 repository gate passes 35 tests with zero failures,
+  errors or skips. It includes real PostgreSQL Flyway/JPA mapping evidence and
+  the synthetic recovery drill.
+- The current source-only candidate container builds locally. It was not
+  deployed or vulnerability-scanned.
 - OWASP Dependency-Check 12.1.8 completed against the cached 2026-07-18
   advisory database: 61 dependencies, 9 vulnerable dependencies, 137
   vulnerability matches, including 17 Critical and 37 High matches. Results
@@ -59,34 +83,34 @@ file replacements mark older files inactive.
    Store bearer/service identity and owner-context contract end to end.
 2. Integrated cross-user tests do not yet cover the complete
    Gateway/CV/Export/Store/Application Tracker journey.
-3. Generated CV/cover-letter text and exported bytes are stored as plaintext
-   LOBs without an approved encryption, key-management, or storage boundary.
-4. The default database is in-memory H2; data disappears on restart.
-5. H2 Console is enabled and reachable from other hosts, SQL is logged, and
-   Hibernate `ddl-auto: update` replaces controlled migrations.
-6. There is no draft/final/approved lifecycle, prompt version, model version,
-   schema version, claim evidence, retention deadline, deletion audit, or
-   legal-hold/export state.
-7. `nextVersion` reads then increments without locking or a uniqueness
+3. Generated CV/cover-letter text and exported bytes remain co-located in
+   PostgreSQL until DOC-03 establishes the approved encrypted object-storage
+   lifecycle; deployed encryption/key evidence remains owned by INFRA-08.
+4. There is no draft/final/approved lifecycle, prompt version, model version,
+   generation schema version, claim evidence, retention deadline, deletion
+   audit, or legal-hold/export state.
+5. `nextVersion` reads then increments without locking or a uniqueness
    constraint; concurrent writes can allocate duplicate versions.
-8. Activation/deactivation updates are not protected as one transactional,
+6. Activation/deactivation updates are not protected as one transactional,
    constrained operation, so multiple active versions can exist.
-9. Base64 document-file requests and stored document fields lack bounded
+7. Base64 document-file requests and stored document fields lack bounded
    content/field limits. Multipart limits alone do not protect internal calls.
-10. DOCX inspection only looks for two ZIP entries and does not bound entry
+8. DOCX inspection only looks for two ZIP entries and does not bound entry
     count, compression ratio, total expanded bytes, macros, external
     relationships, or active content. PDF signatures are not validated.
-11. File metadata still trusts caller filenames and MIME types. File ownership
+9. File metadata still trusts caller filenames and MIME types. File ownership
     is now joined to the owning document for public UUID lookups.
-12. Deactivation scans all documents in memory for an application.
-13. Application request/service logs now redact stable owner and resource
+10. Deactivation scans all documents in memory for an application.
+11. Application request/service logs now redact stable owner and resource
     identifiers, but audit-event coverage and log-retention policy remain
     incomplete.
-14. Tests now cover authentication, service least privilege, owner and
-    cross-user denial plus happy-path CRUD/replacement. They do not yet cover
-    concurrent versioning, retention/deletion, encryption, malicious uploads,
-    large payloads, durable restart or integrated consumers.
-15. Current Spring, Tomcat, Jackson, logging, and Swagger UI dependency
+12. Tests now cover authentication, service least privilege, owner and
+    cross-user denial, happy-path CRUD/replacement, production configuration,
+    PostgreSQL migration/application-restart persistence, backup/restore
+    integrity and synthetic storage deletion. They do not yet cover concurrent
+    versioning, governed lifecycle deletion/retention, deployed encryption,
+    malicious uploads, large payloads or integrated consumers.
+13. Current Spring, Tomcat, Jackson, logging, and Swagger UI dependency
     findings include untriaged Critical/High advisories; the container has not
     been scanned.
 

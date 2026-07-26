@@ -9,23 +9,33 @@ spring:
       max-file-size: 25MB
       max-request-size: 30MB
   datasource:
-    url: jdbc:h2:mem:documentstoredb
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    url: ${DOCUMENT_STORE_DATABASE_URL}
+    driver-class-name: org.postgresql.Driver
+    username: ${DOCUMENT_STORE_DATABASE_USERNAME}
+    password: ${DOCUMENT_STORE_DATABASE_PASSWORD}
+    hikari:
+      initialization-fail-timeout: 1
+      data-source-properties:
+        sslmode: ${DOCUMENT_STORE_DATABASE_SSL_MODE:verify-full}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration/common
+    clean-disabled: true
+    validate-on-migrate: true
+    validate-migration-naming: true
   h2:
     console:
-      enabled: true
-      path: /h2-console
-      settings:
-        web-allow-others: true
+      enabled: false
   jpa:
     hibernate:
-      ddl-auto: update
-    show-sql: true
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
+        jdbc:
+          time_zone: UTC
 
 management:
   endpoints:
@@ -34,6 +44,12 @@ management:
         include: health
 
 document-store:
+  database:
+    production-safety-check: true
+    encryption-at-rest-enabled: ${DOCUMENT_STORE_ENCRYPTION_AT_REST_ENABLED:false}
+    encryption-key-reference: ${DOCUMENT_STORE_ENCRYPTION_KEY_REFERENCE:}
+    backup-encryption-enabled: ${DOCUMENT_STORE_BACKUP_ENCRYPTION_ENABLED:false}
+    backup-key-reference: ${DOCUMENT_STORE_BACKUP_KEY_REFERENCE:}
   security:
     jwk-set-uri: ${AUTH_JWKS_URI:http://authentication-service:8084/.well-known/jwks.json}
     issuer: ${DOCUMENT_STORE_JWT_ISSUER:job-seeker-copilot-authentication}
@@ -48,3 +64,5 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{correlationId}] [%X{serviceName}] [%thread] %logger{36} - %msg%n"
   level:
     com.jobseekercopilot: ${APP_LOG_LEVEL:INFO}
+    org.hibernate.SQL: "OFF"
+    org.hibernate.orm.jdbc.bind: "OFF"

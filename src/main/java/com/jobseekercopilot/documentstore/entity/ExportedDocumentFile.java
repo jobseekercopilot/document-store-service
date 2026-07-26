@@ -7,7 +7,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -31,11 +30,11 @@ public class ExportedDocumentFile {
     @Id
     private UUID id;
 
-    @Column(nullable = false)
+    @Column(name = "generated_document_id", nullable = false)
     private UUID generatedDocumentId;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "generatedDocumentId", insertable = false, updatable = false)
+    @JoinColumn(name = "generated_document_id", insertable = false, updatable = false)
     private GeneratedDocument generatedDocument;
 
     @Enumerated(EnumType.STRING)
@@ -57,8 +56,7 @@ public class ExportedDocumentFile {
     @Builder.Default
     private boolean active = true;
 
-    @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "BYTEA")
     private byte[] fileContent;
 
     @Column(nullable = false, updatable = false)

@@ -5,6 +5,7 @@ import com.jobseekercopilot.documentstore.dto.DocumentReferenceResponse;
 import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
+import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
 import com.jobseekercopilot.documentstore.entity.GenerationProvenance;
@@ -28,7 +29,7 @@ import java.util.stream.Collectors;
 public class GeneratedDocumentService {
 
     private final GeneratedDocumentRepository repository;
-    private final DocumentFileLifecycleService fileLifecycleService;
+    private final DocumentRetentionService retentionService;
     private final DocumentOperationLock operationLock;
     private final DocumentStoreMetrics metrics;
 
@@ -158,6 +159,10 @@ public class GeneratedDocumentService {
             throw new OperationConflictException(
                     "Document version is not approved for application use.");
         }
+        if (document.getRetentionState() != DocumentRetentionState.AVAILABLE) {
+            throw new OperationConflictException(
+                    "Document version is not available for application use.");
+        }
         return mapToReference(document);
     }
 
@@ -183,23 +188,10 @@ public class GeneratedDocumentService {
     }
 
     @Transactional
-    public void deleteDocument(String ownerId, UUID id) {
+    public void deleteDocument(String ownerId, UUID id, String actorId) {
         metrics.observe("document", "delete", null, null, () -> {
-            deleteDocumentInternal(ownerId, id);
+            retentionService.softDelete(ownerId, id, actorId);
         });
-    }
-
-    private void deleteDocumentInternal(String ownerId, UUID id) {
-        GeneratedDocument document = findOwnedDocument(ownerId, id);
-        operationLock.acquire(lockScope(
-                "document-family", ownerId, document.getDocumentFamilyId()));
-        document = findOwnedDocument(ownerId, id);
-        if (document.getLifecycleState() == DocumentLifecycleState.APPROVED) {
-            throw new OperationConflictException(
-                    "Approved document versions require retention-aware deletion.");
-        }
-        fileLifecycleService.deleteForDocuments(List.of(document.getId()));
-        repository.delete(document);
     }
 
     @Transactional
@@ -249,8 +241,10 @@ public class GeneratedDocumentService {
                 "document-family", ownerId, document.getDocumentFamilyId()));
         document = findOwnedDocument(ownerId, documentId);
         if (document.getLifecycleState() == DocumentLifecycleState.APPROVED) {
+            requireAvailable(document);
             return mapToResponse(document);
         }
+        requireAvailable(document);
         if (document.getSourceType() == DocumentSourceType.GENERATED
                 && document.getGenerationProvenance() == null) {
             throw new OperationConflictException(
@@ -327,6 +321,7 @@ public class GeneratedDocumentService {
             throw new OperationConflictException(
                     "Only an approved document version can be selected as current.");
         }
+        requireAvailable(document);
         if (document.isActive()) {
             return mapToResponse(document);
         }
@@ -344,6 +339,10 @@ public class GeneratedDocumentService {
         if (!latestVersion.getJobId().equals(request.getJobId())
                 || latestVersion.getDocumentType() != request.getDocumentType()) {
             throw ResourceNotFoundException.documentNotFound();
+        }
+        if (latestVersion.getRetentionState() != DocumentRetentionState.AVAILABLE) {
+            throw new OperationConflictException(
+                    "Archived or deleted document families must be restored before adding a version.");
         }
     }
 
@@ -385,16 +384,28 @@ public class GeneratedDocumentService {
                 .active(document.isActive())
                 .current(document.isActive())
                 .lifecycleState(document.getLifecycleState())
+                .retentionState(document.getRetentionState())
                 .contentSha256(document.getContentSha256())
                 .generationMetadata(toDto(document.getGenerationProvenance()))
                 .approvedAt(document.getApprovedAt())
                 .approvedBy(document.getApprovedBy())
+                .archivedAt(document.getArchivedAt())
+                .deletedAt(document.getDeletedAt())
+                .purgeEligibleAt(document.getPurgeEligibleAt())
+                .legalHold(document.isLegalHold())
                 .originalFilename(document.getOriginalFilename())
                 .sourceType(document.getSourceType())
                 .createdBy(document.getCreatedBy())
                 .createdAt(document.getCreatedAt())
                 .updatedAt(document.getUpdatedAt())
                 .build();
+    }
+
+    private void requireAvailable(GeneratedDocument document) {
+        if (document.getRetentionState() != DocumentRetentionState.AVAILABLE) {
+            throw new OperationConflictException(
+                    "Archived or deleted documents cannot become current or approved.");
+        }
     }
 
     private DocumentReferenceResponse mapToReference(GeneratedDocument document) {

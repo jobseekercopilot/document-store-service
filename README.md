@@ -12,7 +12,9 @@ locking, database uniqueness, retry keys and explicit restoration. Production
 file writes additionally require a
 private S3-compatible bucket and managed SSE-KMS key. Approved consumers and
 Infrastructure have not completed identity, secret/key, bucket and deployment
-rollout, and production retention, integrated consumer idempotency and
+rollout. Retention transitions and fail-closed purge guards now exist in the
+repository, but product/legal policy approval, the client recovery journey,
+cross-service application-link protection, integrated consumer idempotency and
 deployed reconciliation alerting remain open. See
 [`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md).
 
@@ -41,7 +43,7 @@ remain required.
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-1.4.0 contract. Maven verification fails when the running contract drifts from
+2.1.0 contract. Maven verification fails when the running contract drifts from
 this file.
 
 The identity sources, least-privilege service roles, authorization matrix,
@@ -61,6 +63,11 @@ The repository does not provision paid monitoring infrastructure.
 The durable storage-operation journal, bounded reconciler, privacy-safe
 metrics and guarded orphan-recovery procedure are defined in
 [`docs/STORAGE_RECONCILIATION.md`](docs/STORAGE_RECONCILIATION.md).
+Approval/version behavior is defined in
+[`docs/DOCUMENT_LIFECYCLE.md`](docs/DOCUMENT_LIFECYCLE.md). Recoverable
+deletion, legal hold, fail-closed purge, proposed retention periods and
+production approval gates are defined in
+[`docs/RETENTION_AND_PURGE.md`](docs/RETENTION_AND_PURGE.md).
 
 ## Build
 
@@ -77,13 +84,14 @@ environment-data isolation, contract drift checks and a real PostgreSQL
 migration/application-restart/backup/restore/deletion drill, legacy BYTEA
 upgrade, object restart recovery, SSE-KMS request and checksum quarantine
 evidence, parallel version allocation, idempotent retries, transactional
-rollback and restore, plus malicious/corrupt file rejection and safe-download
-controls. It also covers bounded operation metrics, log/metric redaction,
-correlation propagation, database/object-storage readiness and reconciliation
-signals.
-Passing it does not resolve consumer rollout, deployed platform
-evidence, deployed monitoring/reconciliation alerting or governed retention
-blockers.
+rollback and restore, malicious/corrupt file rejection, safe-download controls,
+owner-scoped archive/restore/soft deletion, guarded purge, legal hold and
+bounded audit maintenance. It also covers bounded operation metrics,
+log/metric redaction, correlation propagation, database/object-storage
+readiness and reconciliation signals.
+Passing it does not resolve consumer rollout, deployed platform evidence,
+deployed monitoring/reconciliation alerting or product/legal retention
+approval.
 
 To intentionally refresh the contract after reviewing an API change:
 

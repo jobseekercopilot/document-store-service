@@ -20,6 +20,14 @@ public interface DocumentStorageOperationRepository
 
     boolean existsByStorageKeyAndState(String storageKey, StorageOperationState state);
 
+    boolean existsByGeneratedDocumentIdAndState(
+            UUID generatedDocumentId, StorageOperationState state);
+
+    List<DocumentStorageOperation> findByStateInAndUpdatedAtBeforeOrderByUpdatedAtAsc(
+            List<StorageOperationState> states,
+            LocalDateTime cutoff,
+            Pageable pageable);
+
     List<DocumentStorageOperation> findByStateAndUpdatedAtBeforeOrderByStorageKeyAsc(
             StorageOperationState state,
             LocalDateTime cutoff,

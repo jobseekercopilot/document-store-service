@@ -9,7 +9,7 @@
     "license" : {
       "name" : "Proprietary and confidential"
     },
-    "version" : "2.0.0"
+    "version" : "2.1.0"
   },
   "servers" : [ {
     "url" : "http://localhost:8089",
@@ -203,22 +203,22 @@
               }
             }
           },
-          "409" : {
-            "description" : "Idempotency conflict",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/DocumentFileResponse"
-                }
-              }
-            }
-          },
           "413" : {
             "description" : "Upload exceeds a configured safety limit",
             "content" : {
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Idempotency conflict",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentFileResponse"
                 }
               }
             }
@@ -330,6 +330,16 @@
               }
             }
           },
+          "413" : {
+            "description" : "Decoded file or archive exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "201" : {
             "description" : "Exported file saved successfully",
             "content" : {
@@ -359,13 +369,93 @@
                 }
               }
             }
-          },
-          "413" : {
-            "description" : "Decoded file or archive exceeds a configured safety limit",
+          }
+        },
+        "security" : [ {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/api/v1/documents/{documentId}/restore" : {
+      "patch" : {
+        "tags" : [ "Generated Documents" ],
+        "summary" : "Restore an archived or soft-deleted document",
+        "description" : "Restores availability without selecting the version as current",
+        "operationId" : "restoreDocument",
+        "parameters" : [ {
+          "name" : "documentId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
             "content" : {
               "*/*" : {
                 "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
+                  "$ref" : "#/components/schemas/GeneratedDocumentResponse"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        }, {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/api/v1/documents/{documentId}/legal-hold" : {
+      "patch" : {
+        "tags" : [ "Generated Documents" ],
+        "summary" : "Apply or release a legal hold",
+        "description" : "Requires the dedicated retention-administrator service identity",
+        "operationId" : "setLegalHold",
+        "parameters" : [ {
+          "name" : "documentId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/LegalHoldRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/GeneratedDocumentResponse"
                 }
               }
             }
@@ -381,6 +471,46 @@
         "tags" : [ "Generated Documents" ],
         "summary" : "Select an approved version as the current family version",
         "operationId" : "selectCurrentDocumentVersion",
+        "parameters" : [ {
+          "name" : "documentId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/GeneratedDocumentResponse"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        }, {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/api/v1/documents/{documentId}/archive" : {
+      "patch" : {
+        "tags" : [ "Generated Documents" ],
+        "summary" : "Archive an available document",
+        "operationId" : "archiveDocument",
         "parameters" : [ {
           "name" : "documentId",
           "in" : "path",
@@ -647,7 +777,8 @@
       },
       "delete" : {
         "tags" : [ "Generated Documents" ],
-        "summary" : "Delete a document",
+        "summary" : "Soft-delete a document",
+        "description" : "Starts the configured recovery window without immediately removing content or files",
         "operationId" : "deleteDocument",
         "parameters" : [ {
           "name" : "id",
@@ -672,7 +803,7 @@
             "description" : "Document not found"
           },
           "204" : {
-            "description" : "Document deleted successfully"
+            "description" : "Document is soft deleted"
           }
         },
         "security" : [ {
@@ -845,6 +976,49 @@
                   "type" : "array",
                   "items" : {
                     "$ref" : "#/components/schemas/DocumentFileResponse"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        }, {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/api/v1/documents/{documentId}/lifecycle-events" : {
+      "get" : {
+        "tags" : [ "Generated Documents" ],
+        "summary" : "List the owner-scoped document lifecycle audit",
+        "operationId" : "lifecycleEvents",
+        "parameters" : [ {
+          "name" : "documentId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/DocumentLifecycleEventResponse"
                   }
                 }
               }
@@ -1111,6 +1285,38 @@
           "environmentDataToken" : [ ]
         } ]
       }
+    },
+    "/api/v1/documents/{documentId}/purge" : {
+      "delete" : {
+        "tags" : [ "Generated Documents" ],
+        "summary" : "Irreversibly purge an eligible document",
+        "description" : "Fail-closed retention-admin operation; disabled until an approved policy is configured",
+        "operationId" : "purgeDocument",
+        "parameters" : [ {
+          "name" : "documentId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK"
+          }
+        },
+        "security" : [ {
+          "serviceToken" : [ ]
+        } ]
+      }
     }
   },
   "components" : {
@@ -1156,6 +1362,10 @@
             "type" : "string",
             "enum" : [ "DRAFT", "APPROVED" ]
           },
+          "retentionState" : {
+            "type" : "string",
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+          },
           "contentSha256" : {
             "type" : "string"
           },
@@ -1167,6 +1377,37 @@
             "format" : "date-time"
           },
           "approvedBy" : {
+            "type" : "string"
+          },
+          "archivedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "archivedBy" : {
+            "type" : "string"
+          },
+          "deletedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "deletedBy" : {
+            "type" : "string"
+          },
+          "purgeEligibleAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "legalHold" : {
+            "type" : "boolean"
+          },
+          "legalHoldReference" : {
+            "type" : "string"
+          },
+          "legalHoldUpdatedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "legalHoldUpdatedBy" : {
             "type" : "string"
           },
           "currentSlot" : {
@@ -1539,6 +1780,11 @@
             "type" : "string",
             "enum" : [ "DRAFT", "APPROVED" ]
           },
+          "retentionState" : {
+            "type" : "string",
+            "description" : "Recoverable retention state",
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+          },
           "contentSha256" : {
             "type" : "string",
             "description" : "SHA-256 of the stored text content"
@@ -1552,6 +1798,22 @@
           },
           "approvedBy" : {
             "type" : "string"
+          },
+          "archivedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "deletedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "purgeEligibleAt" : {
+            "type" : "string",
+            "description" : "Earliest time an authorized purge may be considered",
+            "format" : "date-time"
+          },
+          "legalHold" : {
+            "type" : "boolean"
           },
           "originalFilename" : {
             "type" : "string",
@@ -1717,6 +1979,20 @@
         },
         "description" : "Request to store an exported document file"
       },
+      "LegalHoldRequest" : {
+        "required" : [ "reference" ],
+        "type" : "object",
+        "properties" : {
+          "active" : {
+            "type" : "boolean"
+          },
+          "reference" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
       "DocumentReferenceResponse" : {
         "type" : "object",
         "properties" : {
@@ -1757,6 +2033,41 @@
           }
         },
         "description" : "Owner-scoped immutable document-version reference without document content"
+      },
+      "DocumentLifecycleEventResponse" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "documentId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "action" : {
+            "type" : "string",
+            "enum" : [ "ARCHIVED", "RESTORED", "SOFT_DELETED", "LEGAL_HOLD_APPLIED", "LEGAL_HOLD_RELEASED", "PURGED" ]
+          },
+          "fromState" : {
+            "type" : "string",
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+          },
+          "toState" : {
+            "type" : "string",
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+          },
+          "actorId" : {
+            "type" : "string"
+          },
+          "policyVersion" : {
+            "type" : "string"
+          },
+          "occurredAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
       }
     },
     "securitySchemes" : {

@@ -346,7 +346,7 @@ class DocumentFileControllerIntegrationTest {
     }
 
     @Test
-    void deleteDocument_ShouldDeleteObjectAndMetadata() throws Exception {
+    void deleteDocument_ShouldRetainObjectAndMetadataForRecovery() throws Exception {
         GeneratedDocument document = saveDocument();
         UUID fileId = createFile(
                 document.getId(),
@@ -359,9 +359,11 @@ class DocumentFileControllerIntegrationTest {
                         .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isNoContent());
 
-        assertFalse(objectStorage.exists(key));
-        assertTrue(fileRepository.findById(fileId).isEmpty());
-        assertTrue(documentRepository.findById(document.getId()).isEmpty());
+        assertTrue(objectStorage.exists(key));
+        assertTrue(fileRepository.findById(fileId).isPresent());
+        assertEquals(
+                com.jobseekercopilot.documentstore.entity.DocumentRetentionState.DELETED,
+                documentRepository.findById(document.getId()).orElseThrow().getRetentionState());
     }
 
     @Test

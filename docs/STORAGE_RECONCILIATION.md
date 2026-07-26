@@ -50,6 +50,14 @@ repeats that action.
 The scheduler is enabled by default. Tests disable it and invoke the reconciler
 directly.
 
+Reconciliation cursors are operational state and are not selected by retention
+maintenance. Database-backed scans retain the last key only when a full batch
+indicates that another page may exist; an end page resets the cursor to the
+start. The object-store cursor follows the provider continuation key and resets
+only when the provider reports the scan complete. This makes later passes
+revisit transient failures and newly eligible records without deleting cursor
+evidence on a time schedule.
+
 | Setting | Default | Purpose |
 | --- | ---: | --- |
 | `DOCUMENT_STORE_RECONCILIATION_ENABLED` | `true` | Required by the production safety verifier |
@@ -61,6 +69,16 @@ directly.
 
 The object prefix is fixed to the opaque application namespace `documents/`.
 Do not widen it to the whole bucket.
+
+## Retention interaction
+
+`PREPARED` journal rows are protected recovery state. They never age out and
+block irreversible purge of their document until reconciliation or reviewed
+manual resolution. Once a row is `COMMITTED` or `ROLLED_BACK`, an approved
+retention-maintenance policy may remove it after the configured completed
+operation period, in bounded batches. The maintenance job cannot delete
+documents, file metadata, objects, unknown orphans or cursors. See
+[`RETENTION_AND_PURGE.md`](RETENTION_AND_PURGE.md).
 
 ## AWS deployment requirements
 

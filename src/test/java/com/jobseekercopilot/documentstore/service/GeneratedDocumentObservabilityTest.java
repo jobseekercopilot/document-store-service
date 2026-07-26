@@ -25,7 +25,7 @@ class GeneratedDocumentObservabilityTest {
     private GeneratedDocumentRepository repository;
 
     @Mock
-    private DocumentFileLifecycleService fileLifecycleService;
+    private DocumentRetentionService retentionService;
 
     @Mock
     private DocumentOperationLock operationLock;
@@ -38,7 +38,7 @@ class GeneratedDocumentObservabilityTest {
         registry = new SimpleMeterRegistry();
         service = new GeneratedDocumentService(
                 repository,
-                fileLifecycleService,
+                retentionService,
                 operationLock,
                 new DocumentStoreMetrics(registry));
     }

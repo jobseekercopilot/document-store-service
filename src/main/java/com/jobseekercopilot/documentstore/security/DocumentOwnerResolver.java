@@ -26,7 +26,8 @@ public class DocumentOwnerResolver {
         }
 
         if (hasAuthority(authentication, DocumentAuthorities.PRODUCER)
-                || hasAuthority(authentication, DocumentAuthorities.READER)) {
+                || hasAuthority(authentication, DocumentAuthorities.READER)
+                || hasAuthority(authentication, DocumentAuthorities.RETENTION_ADMIN)) {
             if (!StringUtils.hasText(ownerContext)) {
                 throw new IllegalArgumentException(
                         "Document owner is required for service requests.");

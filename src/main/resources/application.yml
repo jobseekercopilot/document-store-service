@@ -62,6 +62,15 @@ document-store:
     initial-delay-ms: ${DOCUMENT_STORE_RECONCILIATION_INITIAL_DELAY_MS:60000}
     fixed-delay-ms: ${DOCUMENT_STORE_RECONCILIATION_FIXED_DELAY_MS:300000}
     object-prefix: documents/
+  retention:
+    purge-enabled: ${DOCUMENT_STORE_PURGE_ENABLED:false}
+    maintenance-enabled: ${DOCUMENT_STORE_RETENTION_MAINTENANCE_ENABLED:false}
+    recovery-days: ${DOCUMENT_STORE_RECOVERY_DAYS:30}
+    completed-operation-days: ${DOCUMENT_STORE_COMPLETED_OPERATION_RETENTION_DAYS:90}
+    lifecycle-audit-days: ${DOCUMENT_STORE_LIFECYCLE_AUDIT_DAYS:365}
+    maintenance-batch-size: ${DOCUMENT_STORE_RETENTION_BATCH_SIZE:50}
+    maintenance-fixed-delay-ms: ${DOCUMENT_STORE_RETENTION_FIXED_DELAY_MS:86400000}
+    policy-version: ${DOCUMENT_STORE_RETENTION_POLICY_VERSION:UNAPPROVED}
   validation:
     maximum-file-bytes: ${DOCUMENT_STORE_MAXIMUM_FILE_BYTES:10485760}
     maximum-docx-entries: ${DOCUMENT_STORE_MAXIMUM_DOCX_ENTRIES:256}
@@ -92,6 +101,7 @@ document-store:
     service-identity:
       producer-token: ${DOCUMENT_STORE_PRODUCER_TOKEN:}
       reader-token: ${DOCUMENT_STORE_READER_TOKEN:}
+      retention-admin-token: ${DOCUMENT_STORE_RETENTION_ADMIN_TOKEN:}
     environment-data-token: ${ENVIRONMENT_DATA_TOKEN:}
 
 logging:

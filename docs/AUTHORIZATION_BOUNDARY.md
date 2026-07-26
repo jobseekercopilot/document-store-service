@@ -1,6 +1,7 @@
 # Document Store authorization boundary
 
-Status: producer boundary implemented for STORE-01; consumer and deployment rollout remains incomplete.
+Status: producer boundary and DOC-09 retention-administrator isolation
+implemented; consumer, policy and deployment rollout remain incomplete.
 
 ## Identity sources
 
@@ -14,29 +15,33 @@ Document and file identifiers are locators, never authority.
   cannot override it.
 - An approved backend uses exactly one `X-Service-Token` and must bind the user
   it is acting for in exactly one `X-Document-Owner` header. The owner header
-  has meaning only after the producer or reader credential authenticates.
+  has meaning only after the producer, reader or retention-administrator
+  credential authenticates.
 - Environment-data operations use a separate
   `X-Environment-Data-Token`. They remain disabled outside explicitly allowed
   non-production profiles and are forbidden in production.
 - If an `Authorization` header is present, a service token cannot act as a
   fallback for an invalid bearer token.
 
-All three service credentials are runtime injected, contain at least 32 bytes
-and must be distinct. Blank, short or shared values prevent startup.
+All three service credentials plus the environment-data credential are runtime
+injected, contain at least 32 bytes and must be mutually distinct. Blank, short
+or shared values prevent startup.
 
 ## Authorization matrix
 
-| Operation | User access token | Producer service | Reader service | Environment data |
-| --- | --- | --- | --- | --- |
-| Create document text/metadata | Own subject only | Bound owner | Denied | Denied |
-| Read/list document text/metadata | Own subject only | Bound owner | Bound owner | Denied |
-| Delete, activate or deactivate documents | Own subject only | Bound owner | Denied | Denied |
-| Store generated DOCX/PDF bytes | Denied | Bound owner | Denied | Denied |
-| Upload replacement DOCX/PDF | Own subject only | Bound owner | Denied | Denied |
-| Read/list/download file metadata or bytes | Own subject only | Bound owner | Bound owner | Denied |
-| Seed, reset or verify synthetic environment data | Denied | Denied | Denied | Allowed profile only |
-| Health | Public | Public | Public | Public |
-| API documentation | Authenticated | Authenticated | Authenticated | Denied |
+| Operation | User access token | Producer service | Reader service | Retention admin | Environment data |
+| --- | --- | --- | --- | --- | --- |
+| Create document text/metadata | Own subject only | Bound owner | Denied | Denied | Denied |
+| Read/list document text/metadata | Own subject only | Bound owner | Bound owner | Denied | Denied |
+| Archive, restore or soft delete | Own subject only | Bound owner | Denied | Denied | Denied |
+| Apply/release legal hold | Denied | Denied | Denied | Bound owner | Denied |
+| Irreversible guarded purge | Denied | Denied | Denied | Bound owner | Denied |
+| Store generated DOCX/PDF bytes | Denied | Bound owner | Denied | Denied | Denied |
+| Upload replacement DOCX | Own subject only | Bound owner | Denied | Denied | Denied |
+| Read/list/download file metadata or bytes | Own subject only | Bound owner | Bound owner | Denied | Denied |
+| Seed, reset or verify synthetic environment data | Denied | Denied | Denied | Denied | Allowed profile only |
+| Health | Public | Public | Public | Public | Public |
+| API documentation | Authenticated | Authenticated | Authenticated | Authenticated | Denied |
 
 Every repository query used by a public document or file operation includes the
 resolved owner. File queries join the file to its owning document. Foreign and
@@ -63,6 +68,7 @@ missing document/file UUIDs return the same stable `404` message.
 | `DOCUMENT_STORE_JWT_AUDIENCE` | Document Store access-token verification |
 | `DOCUMENT_STORE_PRODUCER_TOKEN` | CV/Cover Letter, Document Export and approved orchestration consumers |
 | `DOCUMENT_STORE_READER_TOKEN` | Approved read-only backend consumers |
+| `DOCUMENT_STORE_RETENTION_ADMIN_TOKEN` | Privacy/legal support automation for hold and guarded purge only |
 | `ENVIRONMENT_DATA_TOKEN` | Isolated non-production fixture controller |
 
 Infrastructure owns injection and rotation. Values must not appear in Git,
@@ -76,9 +82,11 @@ Compose defaults, image layers, workflow logs or shell history.
   approved Store role and propagate trusted owner context.
 - Infrastructure must inject and rotate the credentials and JWT verification
   settings.
+- Product/legal/privacy must approve the retention policy before Infrastructure
+  can enable maintenance or irreversible purge.
 - Integrated tests must prove generation, list, download, upload, replacement,
-  deactivation and deletion for an owner and deny the same operations for a
-  second user.
+  archive, restore and deletion for an owner, deny the same operations for a
+  second user, and prove retention-admin least privilege.
 
 Until those dependencies and the separate persistence, lifecycle, upload and
 retention blockers are complete, the document capability remains disabled for

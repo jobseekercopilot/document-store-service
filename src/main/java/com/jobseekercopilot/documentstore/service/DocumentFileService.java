@@ -1,18 +1,25 @@
 package com.jobseekercopilot.documentstore.service;
 
 import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
+import com.jobseekercopilot.documentstore.dto.DocumentFileDownload;
 import com.jobseekercopilot.documentstore.dto.DocumentFileResponse;
 import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
 import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.FileType;
+import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
 import com.jobseekercopilot.documentstore.exception.ResourceNotFoundException;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
+import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
+import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
+import com.jobseekercopilot.documentstore.storage.ObjectStorageException;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -34,23 +41,23 @@ public class DocumentFileService {
 
     private final ExportedDocumentFileRepository fileRepository;
     private final GeneratedDocumentRepository documentRepository;
+    private final DocumentObjectStorage objectStorage;
 
+    @Transactional
     public DocumentFileResponse createDocumentFile(String ownerId, CreateDocumentFileRequest request) {
         long startedAt = System.nanoTime();
         requireOwnedDocument(ownerId, request.getGeneratedDocumentId());
         validateFileType(request.getFileType());
         validateFileNameAndMimeType(request.getFileName(), request.getMimeType(), request.getFileType());
-        deactivateCurrentFile(ownerId, request.getGeneratedDocumentId(), request.getFileType());
-
-        ExportedDocumentFile saved = fileRepository.save(ExportedDocumentFile.builder()
-                .generatedDocumentId(request.getGeneratedDocumentId())
-                .fileType(request.getFileType())
-                .fileName(request.getFileName())
-                .mimeType(request.getMimeType())
-                .source(FileSource.GENERATED)
-                .active(true)
-                .fileContent(Base64.getDecoder().decode(request.getFileContentBase64()))
-                .build());
+        byte[] content = Base64.getDecoder().decode(request.getFileContentBase64());
+        ExportedDocumentFile saved = storeMetadataAndObject(
+                ownerId,
+                request.getGeneratedDocumentId(),
+                request.getFileType(),
+                request.getFileName(),
+                request.getMimeType(),
+                FileSource.GENERATED,
+                content);
         log.info("Generated document file saved fileType={} source={} durationMs={}",
                 saved.getFileType(),
                 saved.getSource(),
@@ -58,6 +65,7 @@ public class DocumentFileService {
         return mapToResponse(saved);
     }
 
+    @Transactional
     public DocumentFileResponse uploadReplacementFile(
             String ownerId,
             UUID generatedDocumentId,
@@ -80,21 +88,18 @@ public class DocumentFileService {
 
         String fileName = file.getOriginalFilename() == null ? "" : file.getOriginalFilename();
         validateFileNameAndMimeType(fileName, file.getContentType(), fileType);
-        deactivateCurrentFile(ownerId, generatedDocumentId, fileType);
-
         try {
             if (fileType == FileType.DOCX && !hasDocxStructure(file)) {
                 throw new IllegalArgumentException("Only .docx files can be uploaded.");
             }
-            ExportedDocumentFile saved = fileRepository.save(ExportedDocumentFile.builder()
-                    .generatedDocumentId(generatedDocumentId)
-                    .fileType(fileType)
-                    .fileName(fileName)
-                    .mimeType(mimeType(fileType))
-                    .source(source)
-                    .active(true)
-                    .fileContent(file.getBytes())
-                    .build());
+            ExportedDocumentFile saved = storeMetadataAndObject(
+                    ownerId,
+                    generatedDocumentId,
+                    fileType,
+                    fileName,
+                    mimeType(fileType),
+                    source,
+                    file.getBytes());
             log.info("Document file upload saved fileType={} source={} durationMs={}",
                     fileType,
                     source,
@@ -126,22 +131,36 @@ public class DocumentFileService {
     }
 
     public DocumentFileResponse getDocumentFileMetadata(String ownerId, UUID id) {
-        return mapToResponse(getDocumentFile(ownerId, id));
+        return mapToResponse(findActiveDocumentFile(ownerId, id));
     }
 
-    public ExportedDocumentFile getDocumentFile(String ownerId, UUID id) {
+    public DocumentFileDownload downloadDocumentFile(String ownerId, UUID id) {
         long startedAt = System.nanoTime();
-        ExportedDocumentFile file = fileRepository.findByIdAndGeneratedDocument_UserId(id, ownerId)
-                .orElseThrow(ResourceNotFoundException::documentFileNotFound);
-        if (!file.isActive()) {
-            log.warn("Inactive document file download rejected");
-            throw ResourceNotFoundException.documentFileNotFound();
+        ExportedDocumentFile file = findActiveDocumentFile(ownerId, id);
+        byte[] content = objectStorage.get(file.getStorageKey());
+        String actualSha256 = ObjectIntegrity.sha256(content);
+        if (content.length != file.getContentSize()
+                || !actualSha256.equals(file.getContentSha256())) {
+            file.setStorageStatus(ObjectStorageStatus.UNAVAILABLE);
+            fileRepository.save(file);
+            log.error("Document object integrity verification failed");
+            throw new ObjectStorageException("Document object failed integrity verification");
         }
         log.info("Document file loaded fileType={} source={} sizeBytes={} durationMs={}",
                 file.getFileType(),
                 file.getSource(),
-                file.getFileContent() == null ? 0 : file.getFileContent().length,
+                content.length,
                 (System.nanoTime() - startedAt) / 1_000_000);
+        return new DocumentFileDownload(file.getFileName(), file.getMimeType(), content);
+    }
+
+    private ExportedDocumentFile findActiveDocumentFile(String ownerId, UUID id) {
+        ExportedDocumentFile file = fileRepository.findByIdAndGeneratedDocument_UserId(id, ownerId)
+                .orElseThrow(ResourceNotFoundException::documentFileNotFound);
+        if (!file.isActive() || file.getStorageStatus() != ObjectStorageStatus.AVAILABLE) {
+            log.warn("Inactive or unavailable document file access rejected");
+            throw ResourceNotFoundException.documentFileNotFound();
+        }
         return file;
     }
 
@@ -187,6 +206,51 @@ public class DocumentFileService {
         }
     }
 
+    private ExportedDocumentFile storeMetadataAndObject(
+            String ownerId,
+            UUID generatedDocumentId,
+            FileType fileType,
+            String fileName,
+            String mimeType,
+            FileSource source,
+            byte[] content) {
+        int version = fileRepository
+                .findFirstByGeneratedDocumentIdAndFileTypeOrderByVersionDesc(
+                        generatedDocumentId, fileType)
+                .map(ExportedDocumentFile::getVersion)
+                .map(current -> current + 1)
+                .orElse(1);
+        UUID fileId = UUID.randomUUID();
+        String storageKey = ObjectKeyFactory.forFile(generatedDocumentId, fileId, version);
+        String sha256 = ObjectIntegrity.sha256(content);
+        objectStorage.put(storageKey, content, mimeType, sha256);
+        try {
+            deactivateCurrentFile(ownerId, generatedDocumentId, fileType);
+            return fileRepository.saveAndFlush(ExportedDocumentFile.builder()
+                    .id(fileId)
+                    .generatedDocumentId(generatedDocumentId)
+                    .ownerId(ownerId)
+                    .fileType(fileType)
+                    .fileName(fileName)
+                    .mimeType(mimeType)
+                    .source(source)
+                    .active(true)
+                    .version(version)
+                    .storageKey(storageKey)
+                    .contentSize(content.length)
+                    .contentSha256(sha256)
+                    .storageStatus(ObjectStorageStatus.AVAILABLE)
+                    .build());
+        } catch (RuntimeException exception) {
+            try {
+                objectStorage.delete(storageKey);
+            } catch (RuntimeException cleanupFailure) {
+                log.error("Document object compensation failed; DOC-08 reconciliation required");
+            }
+            throw exception;
+        }
+    }
+
     private void requireOwnedDocument(String ownerId, UUID generatedDocumentId) {
         documentRepository.findByIdAndUserId(generatedDocumentId, ownerId)
                 .orElseThrow(ResourceNotFoundException::documentNotFound);
@@ -227,6 +291,11 @@ public class DocumentFileService {
                 .mimeType(file.getMimeType())
                 .source(file.getSource())
                 .active(file.isActive())
+                .version(file.getVersion())
+                .contentSize(file.getContentSize())
+                .contentSha256(file.getContentSha256())
+                .storageStatus(file.getStorageStatus())
+                .storedAt(file.getStoredAt())
                 .createdAt(file.getCreatedAt())
                 .updatedAt(file.getUpdatedAt())
                 .build();

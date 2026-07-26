@@ -71,6 +71,23 @@ class ProductionStorageVerifierTest {
     }
 
     @Test
+    void rejectsFilesystemOrUnencryptedObjectStorageInProduction() {
+        assertThatThrownBy(() -> verifier(validEnvironment()
+                        .withProperty("document-store.object-storage.provider", "filesystem"))
+                .run(NO_ARGUMENTS))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("S3-compatible");
+
+        assertThatThrownBy(() -> verifier(validEnvironment()
+                        .withProperty(
+                                "document-store.object-storage.s3.endpoint",
+                                "http://objects.example"))
+                .run(NO_ARGUMENTS))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("HTTPS");
+    }
+
+    @Test
     void rejectsSchemaMutationAndDebugPaths() {
         assertThatThrownBy(() -> verifier(validEnvironment()
                                 .withProperty("spring.jpa.hibernate.ddl-auto", "update"))
@@ -145,7 +162,15 @@ class ProductionStorageVerifierTest {
                         "document-store.database.backup-encryption-enabled", "true")
                 .withProperty(
                         "document-store.database.backup-key-reference",
-                        "kms://document-store/backups");
+                        "kms://document-store/backups")
+                .withProperty("document-store.object-storage.provider", "s3")
+                .withProperty("document-store.object-storage.s3.region", "eu-west-2")
+                .withProperty("document-store.object-storage.s3.bucket", "document-objects")
+                .withProperty("document-store.object-storage.s3.access-key", "managed-access")
+                .withProperty("document-store.object-storage.s3.secret-key", "managed-secret")
+                .withProperty(
+                        "document-store.object-storage.s3.kms-key-id",
+                        "kms://document-store/objects");
     }
 
     private ProductionStorageVerifier verifier(MockEnvironment environment) {

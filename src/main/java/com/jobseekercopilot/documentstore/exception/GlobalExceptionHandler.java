@@ -6,6 +6,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import com.jobseekercopilot.documentstore.storage.ObjectStorageException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -59,6 +60,16 @@ public class GlobalExceptionHandler {
                 .timestamp(LocalDateTime.now())
                 .build();
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(error);
+    }
+
+    @ExceptionHandler(ObjectStorageException.class)
+    public ResponseEntity<ErrorResponse> handleObjectStorage(ObjectStorageException ex) {
+        ErrorResponse error = ErrorResponse.builder()
+                .status(HttpStatus.SERVICE_UNAVAILABLE.value())
+                .message("Document file storage is temporarily unavailable.")
+                .timestamp(LocalDateTime.now())
+                .build();
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(error);
     }
 
     @ExceptionHandler(Exception.class)

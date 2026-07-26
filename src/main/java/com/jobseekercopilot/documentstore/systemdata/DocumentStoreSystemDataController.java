@@ -1,8 +1,15 @@
 package com.jobseekercopilot.documentstore.systemdata;
 
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
+import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
+import com.jobseekercopilot.documentstore.entity.FileSource;
+import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.service.DocumentFileLifecycleService;
+import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
+import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
+import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,14 +32,20 @@ public class DocumentStoreSystemDataController {
     private final EnvironmentDataGuard guard;
     private final GeneratedDocumentRepository documentRepository;
     private final ExportedDocumentFileRepository fileRepository;
+    private final DocumentObjectStorage objectStorage;
+    private final DocumentFileLifecycleService fileLifecycleService;
 
     public DocumentStoreSystemDataController(
             EnvironmentDataGuard guard,
             GeneratedDocumentRepository documentRepository,
-            ExportedDocumentFileRepository fileRepository) {
+            ExportedDocumentFileRepository fileRepository,
+            DocumentObjectStorage objectStorage,
+            DocumentFileLifecycleService fileLifecycleService) {
         this.guard = guard;
         this.documentRepository = documentRepository;
         this.fileRepository = fileRepository;
+        this.objectStorage = objectStorage;
+        this.fileLifecycleService = fileLifecycleService;
     }
 
     @PostMapping("/seed/documents")
@@ -40,7 +53,10 @@ public class DocumentStoreSystemDataController {
     public ResponseEntity<SystemDataResult> seedDocuments(@RequestBody SystemDataDocumentSeedRequest request) {
         guard.requireEnabled();
         var savedDocuments = documentRepository.saveAllAndFlush(request.documents() == null ? List.of() : request.documents());
-        var savedFiles = fileRepository.saveAll(request.files() == null ? List.of() : request.files());
+        var savedFiles = (request.files() == null ? List.<SystemDataDocumentFileSeed>of() : request.files())
+                .stream()
+                .map(this::seedFile)
+                .toList();
         return ResponseEntity.ok(SystemDataResult.success("SEED", savedDocuments.size() + savedFiles.size(), guard.activeEnvironment(), Map.of(
                 "documents", savedDocuments.size(),
                 "documentVersions", savedDocuments.size(),
@@ -55,7 +71,7 @@ public class DocumentStoreSystemDataController {
         List<UUID> documentIds = documents.stream().map(GeneratedDocument::getId).toList();
         int fileCount = documentIds.isEmpty() ? 0 : fileRepository.findByGeneratedDocumentIdIn(documentIds).size();
         if (!documentIds.isEmpty()) {
-            fileRepository.deleteByGeneratedDocumentIdIn(documentIds);
+            fileLifecycleService.deleteForDocuments(documentIds);
         }
         documentRepository.deleteByUserId(userId);
         return ResponseEntity.ok(SystemDataResult.success("RESET", documents.size() + fileCount, guard.activeEnvironment(), Map.of(
@@ -63,6 +79,47 @@ public class DocumentStoreSystemDataController {
                 "userId", userId,
                 "documents", documents.size(),
                 "files", fileCount)));
+    }
+
+    private ExportedDocumentFile seedFile(SystemDataDocumentFileSeed seed) {
+        GeneratedDocument document = documentRepository.findById(seed.generatedDocumentId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Seeded file must reference a seeded document"));
+        byte[] content = seed.fileContent();
+        if (content == null || content.length == 0) {
+            throw new IllegalArgumentException("Seeded file content is required");
+        }
+        UUID fileId = seed.id() == null ? UUID.randomUUID() : seed.id();
+        int version = seed.version() == null ? 1 : seed.version();
+        String key = ObjectKeyFactory.forFile(document.getId(), fileId, version);
+        String sha256 = ObjectIntegrity.sha256(content);
+        objectStorage.put(key, content, seed.mimeType(), sha256);
+        try {
+            return fileRepository.saveAndFlush(ExportedDocumentFile.builder()
+                    .id(fileId)
+                    .generatedDocumentId(document.getId())
+                    .ownerId(document.getUserId())
+                    .fileType(seed.fileType())
+                    .fileName(seed.fileName())
+                    .mimeType(seed.mimeType())
+                    .source(seed.source() == null ? FileSource.GENERATED : seed.source())
+                    .active(seed.active() == null || seed.active())
+                    .version(version)
+                    .storageKey(key)
+                    .contentSize(content.length)
+                    .contentSha256(sha256)
+                    .storageStatus(ObjectStorageStatus.AVAILABLE)
+                    .createdAt(seed.createdAt())
+                    .updatedAt(seed.updatedAt())
+                    .build());
+        } catch (RuntimeException exception) {
+            try {
+                objectStorage.delete(key);
+            } catch (RuntimeException cleanupFailure) {
+                exception.addSuppressed(cleanupFailure);
+            }
+            throw exception;
+        }
     }
 
     @GetMapping("/verify/documents/{userId}")

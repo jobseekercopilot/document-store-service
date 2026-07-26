@@ -44,6 +44,17 @@ management:
         include: health
 
 document-store:
+  object-storage:
+    provider: ${DOCUMENT_STORE_OBJECT_PROVIDER:s3}
+    filesystem-root: ${DOCUMENT_STORE_FILESYSTEM_ROOT:}
+    s3:
+      endpoint: ${DOCUMENT_STORE_OBJECT_ENDPOINT:}
+      region: ${DOCUMENT_STORE_OBJECT_REGION:}
+      bucket: ${DOCUMENT_STORE_OBJECT_BUCKET:}
+      access-key: ${DOCUMENT_STORE_OBJECT_ACCESS_KEY:}
+      secret-key: ${DOCUMENT_STORE_OBJECT_SECRET_KEY:}
+      kms-key-id: ${DOCUMENT_STORE_OBJECT_KMS_KEY_ID:}
+      path-style-access: ${DOCUMENT_STORE_OBJECT_PATH_STYLE:false}
   database:
     production-safety-check: true
     encryption-at-rest-enabled: ${DOCUMENT_STORE_ENCRYPTION_AT_REST_ENABLED:false}

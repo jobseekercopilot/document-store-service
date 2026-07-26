@@ -63,6 +63,23 @@ public class ProductionStorageVerifier implements ApplicationRunner, FlywayMigra
                 "Encrypted database backups must be declared");
         required("document-store.database.backup-key-reference");
 
+        if (!"s3".equalsIgnoreCase(required("document-store.object-storage.provider"))) {
+            throw new IllegalStateException(
+                    "Production document bytes require the encrypted S3-compatible object-store adapter");
+        }
+        required("document-store.object-storage.s3.region");
+        required("document-store.object-storage.s3.bucket");
+        required("document-store.object-storage.s3.access-key");
+        required("document-store.object-storage.s3.secret-key");
+        required("document-store.object-storage.s3.kms-key-id");
+        String objectEndpoint = environment.getProperty(
+                "document-store.object-storage.s3.endpoint", "");
+        if (!objectEndpoint.isBlank()
+                && !objectEndpoint.toLowerCase(Locale.ROOT).startsWith("https://")) {
+            throw new IllegalStateException(
+                    "Document object-store endpoints must use HTTPS");
+        }
+
         if (!environment.getProperty("spring.flyway.enabled", Boolean.class, false)) {
             throw new IllegalStateException(
                     "Reviewed Flyway migrations are required for Document Store");

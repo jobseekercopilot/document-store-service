@@ -6,8 +6,12 @@ import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
+import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
+import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
+import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,8 +52,11 @@ class PostgresJpaSchemaIntegrationTest {
     @Autowired
     private ExportedDocumentFileRepository fileRepository;
 
+    @Autowired
+    private DocumentObjectStorage objectStorage;
+
     @Test
-    void flywaySchemaIsCompatibleWithJpaTextAndByteMappings() {
+    void flywaySchemaIsCompatibleWithJpaTextAndObjectMetadataMappings() {
         GeneratedDocument document = documentRepository.saveAndFlush(
                 GeneratedDocument.builder()
                         .userId("synthetic-jpa-owner")
@@ -60,18 +67,29 @@ class PostgresJpaSchemaIntegrationTest {
                         .build());
 
         byte[] bytes = "synthetic-postgresql-bytes".getBytes(StandardCharsets.UTF_8);
+        var fileId = java.util.UUID.randomUUID();
+        String key = ObjectKeyFactory.forFile(document.getId(), fileId, 1);
+        String sha256 = ObjectIntegrity.sha256(bytes);
+        objectStorage.put(key, bytes, "application/pdf", sha256);
         ExportedDocumentFile file = fileRepository.saveAndFlush(
                 ExportedDocumentFile.builder()
+                        .id(fileId)
                         .generatedDocumentId(document.getId())
+                        .ownerId(document.getUserId())
                         .fileType(FileType.PDF)
                         .fileName("synthetic.pdf")
                         .mimeType("application/pdf")
-                        .fileContent(bytes)
+                        .version(1)
+                        .storageKey(key)
+                        .contentSize(bytes.length)
+                        .contentSha256(sha256)
+                        .storageStatus(ObjectStorageStatus.AVAILABLE)
                         .build());
 
         assertThat(documentRepository.findById(document.getId()).orElseThrow().getContent())
                 .isEqualTo("Synthetic PostgreSQL text");
-        assertThat(fileRepository.findById(file.getId()).orElseThrow().getFileContent())
-                .isEqualTo(bytes);
+        assertThat(fileRepository.findById(file.getId()).orElseThrow().getContentSha256())
+                .isEqualTo(sha256);
+        assertThat(objectStorage.get(key)).isEqualTo(bytes);
     }
 }

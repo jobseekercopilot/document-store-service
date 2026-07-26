@@ -9,7 +9,7 @@
     "license" : {
       "name" : "Proprietary and confidential"
     },
-    "version" : "1.1.0"
+    "version" : "1.2.0"
   },
   "servers" : [ {
     "url" : "http://localhost:8089",
@@ -835,54 +835,6 @@
   },
   "components" : {
     "schemas" : {
-      "ExportedDocumentFile" : {
-        "type" : "object",
-        "properties" : {
-          "id" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "generatedDocumentId" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "generatedDocument" : {
-            "$ref" : "#/components/schemas/GeneratedDocument"
-          },
-          "fileType" : {
-            "type" : "string",
-            "enum" : [ "DOCX", "PDF" ]
-          },
-          "fileName" : {
-            "type" : "string"
-          },
-          "mimeType" : {
-            "type" : "string"
-          },
-          "source" : {
-            "type" : "string",
-            "enum" : [ "GENERATED", "USER_UPLOADED" ]
-          },
-          "active" : {
-            "type" : "boolean"
-          },
-          "fileContent" : {
-            "type" : "array",
-            "items" : {
-              "type" : "string",
-              "format" : "byte"
-            }
-          },
-          "createdAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "updatedAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          }
-        }
-      },
       "GeneratedDocument" : {
         "type" : "object",
         "properties" : {
@@ -936,6 +888,55 @@
           }
         }
       },
+      "SystemDataDocumentFileSeed" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "generatedDocumentId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "fileType" : {
+            "type" : "string",
+            "enum" : [ "DOCX", "PDF" ]
+          },
+          "fileName" : {
+            "type" : "string"
+          },
+          "mimeType" : {
+            "type" : "string"
+          },
+          "source" : {
+            "type" : "string",
+            "enum" : [ "GENERATED", "USER_UPLOADED" ]
+          },
+          "active" : {
+            "type" : "boolean"
+          },
+          "version" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "fileContent" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string",
+              "format" : "byte"
+            }
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "updatedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
       "SystemDataDocumentSeedRequest" : {
         "type" : "object",
         "properties" : {
@@ -954,7 +955,7 @@
           "files" : {
             "type" : "array",
             "items" : {
-              "$ref" : "#/components/schemas/ExportedDocumentFile"
+              "$ref" : "#/components/schemas/SystemDataDocumentFileSeed"
             }
           }
         }
@@ -1172,6 +1173,33 @@
             "type" : "boolean",
             "description" : "Whether this is the active file for its document and type",
             "example" : true
+          },
+          "version" : {
+            "type" : "integer",
+            "description" : "Monotonic version within this generated document and file type",
+            "format" : "int32",
+            "example" : 2
+          },
+          "contentSize" : {
+            "type" : "integer",
+            "description" : "Object size in bytes",
+            "format" : "int64",
+            "example" : 18432
+          },
+          "contentSha256" : {
+            "type" : "string",
+            "description" : "Lowercase SHA-256 digest used to verify object integrity"
+          },
+          "storageStatus" : {
+            "type" : "string",
+            "description" : "Storage lifecycle status",
+            "example" : "AVAILABLE",
+            "enum" : [ "LEGACY_DATABASE", "AVAILABLE", "DELETE_PENDING", "UNAVAILABLE" ]
+          },
+          "storedAt" : {
+            "type" : "string",
+            "description" : "Timestamp when the object store accepted the file",
+            "format" : "date-time"
           },
           "createdAt" : {
             "type" : "string",

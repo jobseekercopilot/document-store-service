@@ -21,13 +21,18 @@ import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
 import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
+import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter;
+import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
+import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
+import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -79,6 +84,9 @@ class DocumentSecurityIntegrationTest {
 
     @Autowired
     private ExportedDocumentFileRepository fileRepository;
+
+    @Autowired
+    private DocumentObjectStorage objectStorage;
 
     @BeforeEach
     void cleanDatabase() {
@@ -318,6 +326,49 @@ class DocumentSecurityIntegrationTest {
                 .andExpect(status().isOk());
     }
 
+    @Test
+    void environmentDataSeedAndResetUseTheObjectStorageLifecycle() throws Exception {
+        GeneratedDocument document = saveDocument("alice", "application-a");
+        UUID fileId = UUID.randomUUID();
+        byte[] content = "%PDF-e2e-seed".getBytes(StandardCharsets.UTF_8);
+        Map<String, Object> request = Map.of(
+                "scenarioId", "object-storage-scenario",
+                "userId", "alice",
+                "documents", List.of(),
+                "files", List.of(Map.of(
+                        "id", fileId,
+                        "generatedDocumentId", document.getId(),
+                        "fileType", "PDF",
+                        "fileName", "seeded.pdf",
+                        "mimeType", MediaType.APPLICATION_PDF_VALUE,
+                        "source", "GENERATED",
+                        "active", true,
+                        "version", 1,
+                        "fileContent", content)));
+
+        mockMvc.perform(post("/internal/system-data/seed/documents")
+                        .header(
+                                DocumentServiceIdentityFilter.ENVIRONMENT_DATA_HEADER,
+                                ENVIRONMENT_DATA_TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.details.files").value(1));
+
+        String key = fileRepository.findById(fileId).orElseThrow().getStorageKey();
+        assertTrue(objectStorage.exists(key));
+        mockMvc.perform(delete(
+                        "/internal/system-data/scenario/{scenarioId}/documents/{userId}",
+                        "object-storage-scenario",
+                        "alice")
+                        .header(
+                                DocumentServiceIdentityFilter.ENVIRONMENT_DATA_HEADER,
+                                ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.details.files").value(1));
+        assertFalse(objectStorage.exists(key));
+    }
+
     private void assertAuthenticationFailure(String token) throws Exception {
         var request = get("/api/v1/documents/user/{userId}", "alice");
         if (token != null) {
@@ -361,14 +412,25 @@ class DocumentSecurityIntegrationTest {
     }
 
     private ExportedDocumentFile saveFile(GeneratedDocument document) {
+        byte[] content = "%PDF-test".getBytes(StandardCharsets.UTF_8);
+        UUID fileId = UUID.randomUUID();
+        String key = ObjectKeyFactory.forFile(document.getId(), fileId, 1);
+        String sha256 = ObjectIntegrity.sha256(content);
+        objectStorage.put(key, content, MediaType.APPLICATION_PDF_VALUE, sha256);
         return fileRepository.save(ExportedDocumentFile.builder()
+                .id(fileId)
                 .generatedDocumentId(document.getId())
+                .ownerId(document.getUserId())
                 .fileType(FileType.PDF)
                 .fileName("cv.pdf")
                 .mimeType(MediaType.APPLICATION_PDF_VALUE)
                 .source(FileSource.GENERATED)
                 .active(true)
-                .fileContent("%PDF-test".getBytes(StandardCharsets.UTF_8))
+                .version(1)
+                .storageKey(key)
+                .contentSize(content.length)
+                .contentSha256(sha256)
+                .storageStatus(ObjectStorageStatus.AVAILABLE)
                 .build());
     }
 

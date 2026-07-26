@@ -6,6 +6,8 @@ STORE-01 producer update: 2026-07-24
 
 STORE-02 repository storage update: 2026-07-26
 
+DOC-03 object-storage separation update: 2026-07-26
+
 Status: **Not ready for private beta**
 
 ## STORE-01 producer boundary
@@ -47,15 +49,32 @@ ordered synthetic deletion. The operational contract is published in
 [`STORAGE_OPERATIONS.md`](STORAGE_OPERATIONS.md).
 
 This is repository evidence, not deployed managed-service evidence. INFRA-08
-still owns secret/key injection, rotation and encryption proof. DOC-03 still
-owns relational metadata/object-storage separation and binary lifecycle.
+still owns secret/key injection, rotation and encryption proof.
+
+## DOC-03 object-storage separation
+
+PostgreSQL now owns file metadata only. New DOCX/PDF writes go through a
+provider-neutral object interface; the production S3-compatible adapter
+requests managed SSE-KMS encryption and does not set a public ACL. Metadata
+records the owner, generated-document link, safe name/type, object key,
+version, byte size, SHA-256, lifecycle status and timestamps.
+
+Flyway V2 preserves existing V1 BYTEA rows as `LEGACY_DATABASE`. The startup
+migrator writes and verifies each object before clearing its database BLOB.
+Downloads verify size and SHA-256 and quarantine mismatches. File/document
+deletion commits `DELETE_PENDING` before object and metadata removal. Isolated
+tests use a unique temporary filesystem root; production startup rejects it.
+
+This closes the repository implementation portion of DOC-03. INFRA-08 still
+owns deployed private-bucket, credentials, KMS, backup/versioning and recovery
+evidence. DOC-08 still owns scheduled orphan/missing-object reconciliation.
 
 ## Verified responsibility
 
-The service stores generated CV/cover-letter text and metadata in
-`GeneratedDocument` and stores DOCX/PDF bytes in `ExportedDocumentFile`.
-Generated-document versions can be activated or deactivated, while exported
-file replacements mark older files inactive.
+The service stores generated CV/cover-letter text in `GeneratedDocument`, file
+metadata in `ExportedDocumentFile`, and DOCX/PDF bytes through
+`DocumentObjectStorage`. Generated-document versions can be activated or
+deactivated, while exported file replacements mark older files inactive.
 
 ## Migration evidence
 
@@ -67,9 +86,9 @@ file replacements mark older files inactive.
 - Gitleaks and targeted personal-data checks passed on the source snapshot.
 - `mvn -B clean verify` passed from the clean snapshot: 14 tests, zero
   failures, zero errors, zero skipped.
-- The current STORE-02 repository gate passes 35 tests with zero failures,
-  errors or skips. It includes real PostgreSQL Flyway/JPA mapping evidence and
-  the synthetic recovery drill.
+- The current gate includes real PostgreSQL Flyway/JPA mapping evidence,
+  synthetic database recovery, V1 BYTEA upgrade, isolated object restart,
+  managed S3 encryption request, checksum quarantine and object cleanup.
 - The current source-only candidate container builds locally. It was not
   deployed or vulnerability-scanned.
 - OWASP Dependency-Check 12.1.8 completed against the cached 2026-07-18
@@ -83,9 +102,10 @@ file replacements mark older files inactive.
    Store bearer/service identity and owner-context contract end to end.
 2. Integrated cross-user tests do not yet cover the complete
    Gateway/CV/Export/Store/Application Tracker journey.
-3. Generated CV/cover-letter text and exported bytes remain co-located in
-   PostgreSQL until DOC-03 establishes the approved encrypted object-storage
-   lifecycle; deployed encryption/key evidence remains owned by INFRA-08.
+3. The repository now separates relational metadata and object bytes, but the
+   deployed private bucket, credentials, KMS key, object backup/versioning and
+   restore evidence remain owned by INFRA-08; scheduled cross-store
+   reconciliation remains owned by DOC-08.
 4. There is no draft/final/approved lifecycle, prompt version, model version,
    generation schema version, claim evidence, retention deadline, deletion
    audit, or legal-hold/export state.
@@ -107,9 +127,10 @@ file replacements mark older files inactive.
 12. Tests now cover authentication, service least privilege, owner and
     cross-user denial, happy-path CRUD/replacement, production configuration,
     PostgreSQL migration/application-restart persistence, backup/restore
-    integrity and synthetic storage deletion. They do not yet cover concurrent
-    versioning, governed lifecycle deletion/retention, deployed encryption,
-    malicious uploads, large payloads or integrated consumers.
+    integrity, legacy object migration, checksum quarantine, E2E seed/reset and
+    synthetic object deletion. They do not yet cover concurrent versioning,
+    governed retention/legal hold, deployed encryption, malicious uploads,
+    large payloads or integrated consumers.
 13. Current Spring, Tomcat, Jackson, logging, and Swagger UI dependency
     findings include untriaged Critical/High advisories; the container has not
     been scanned.

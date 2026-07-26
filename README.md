@@ -1,16 +1,17 @@
 # Document Store Service
 
-Persistence service for generated CV and cover-letter text, version metadata,
-and exported DOCX/PDF bytes.
+Persistence service for generated CV and cover-letter text, relational file
+metadata, and private object-backed DOCX/PDF bytes.
 
 This service is **not beta-ready**. Its producer-side API authenticates callers
 and enforces document/file ownership, while its runtime storage boundary now
 fails closed unless durable PostgreSQL, verified TLS, managed credentials,
 managed encryption/key references, encrypted backups and reviewed Flyway
-migrations are configured. Approved consumers and Infrastructure have not
-completed identity, secret/key and deployment rollout, and production
-retention, binary-storage separation, concurrency controls and bounded content
-rules remain open. See
+migrations are configured. Production file writes additionally require a
+private S3-compatible bucket and managed SSE-KMS key. Approved consumers and
+Infrastructure have not completed identity, secret/key, bucket and deployment
+rollout, and production retention, reconciliation, concurrency controls and
+bounded content rules remain open. See
 [`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md).
 
 The bounded generated-document cleanup dependency from Job Finder, and the
@@ -31,13 +32,14 @@ remain required.
 - Maven
 - Spring Data JPA
 - PostgreSQL 15+ for runtime persistence
+- S3-compatible private object storage for DOCX/PDF bytes
 - Flyway for reviewed schema migrations
 - H2 in PostgreSQL compatibility mode for isolated tests only
 
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-1.1.0 contract. Maven verification fails when the running contract drifts from
+1.2.0 contract. Maven verification fails when the running contract drifts from
 this file.
 
 The identity sources, least-privilege service roles, authorization matrix,
@@ -56,9 +58,10 @@ containers for production-schema and recovery evidence.
 The suite includes real JWKS access-token validation, service-role isolation,
 owner-scoped repository queries, foreign/missing UUID equivalence,
 environment-data isolation, contract drift checks and a real PostgreSQL
-migration/application-restart/backup/restore/deletion drill with checksum
+migration/application-restart/backup/restore/deletion drill, legacy BYTEA
+upgrade, object restart recovery, SSE-KMS request and checksum quarantine
 evidence. Passing it does not resolve consumer rollout, deployed platform
-evidence, binary storage separation or document lifecycle blockers.
+evidence, scheduled cross-store reconciliation or governed retention blockers.
 
 To intentionally refresh the contract after reviewing an API change:
 

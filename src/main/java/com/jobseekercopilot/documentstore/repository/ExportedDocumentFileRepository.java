@@ -25,4 +25,6 @@ public interface ExportedDocumentFileRepository extends JpaRepository<ExportedDo
             FileType fileType);
     Optional<ExportedDocumentFile> findFirstByGeneratedDocumentIdAndFileTypeAndActiveTrueOrderByUpdatedAtDesc(
             UUID generatedDocumentId, FileType fileType);
+    Optional<ExportedDocumentFile> findFirstByGeneratedDocumentIdAndFileTypeOrderByVersionDesc(
+            UUID generatedDocumentId, FileType fileType);
 }

@@ -6,8 +6,8 @@ spring:
     name: document-store-service
   servlet:
     multipart:
-      max-file-size: 25MB
-      max-request-size: 30MB
+      max-file-size: ${DOCUMENT_STORE_MAXIMUM_FILE_BYTES:10485760}
+      max-request-size: ${DOCUMENT_STORE_MAXIMUM_REQUEST_BYTES:11534336}
   datasource:
     url: ${DOCUMENT_STORE_DATABASE_URL}
     driver-class-name: org.postgresql.Driver
@@ -44,6 +44,12 @@ management:
         include: health
 
 document-store:
+  validation:
+    maximum-file-bytes: ${DOCUMENT_STORE_MAXIMUM_FILE_BYTES:10485760}
+    maximum-docx-entries: ${DOCUMENT_STORE_MAXIMUM_DOCX_ENTRIES:256}
+    maximum-docx-entry-bytes: ${DOCUMENT_STORE_MAXIMUM_DOCX_ENTRY_BYTES:10485760}
+    maximum-docx-expanded-bytes: ${DOCUMENT_STORE_MAXIMUM_DOCX_EXPANDED_BYTES:26214400}
+    maximum-docx-expansion-ratio: ${DOCUMENT_STORE_MAXIMUM_DOCX_EXPANSION_RATIO:100}
   object-storage:
     provider: ${DOCUMENT_STORE_OBJECT_PROVIDER:s3}
     filesystem-root: ${DOCUMENT_STORE_FILESYSTEM_ROOT:}

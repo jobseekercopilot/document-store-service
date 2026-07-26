@@ -2,6 +2,7 @@ package com.jobseekercopilot.documentstore.exception;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -52,11 +53,33 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
     }
 
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleUnreadableRequest(
+            HttpMessageNotReadableException ex) {
+        ErrorResponse error = ErrorResponse.builder()
+                .status(HttpStatus.BAD_REQUEST.value())
+                .message("Request body is malformed or contains an unsupported value.")
+                .timestamp(LocalDateTime.now())
+                .build();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+    }
+
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ErrorResponse> handleUploadTooLarge(MaxUploadSizeExceededException ex) {
         ErrorResponse error = ErrorResponse.builder()
                 .status(HttpStatus.PAYLOAD_TOO_LARGE.value())
-                .message("Uploaded file must be 25MB or less.")
+                .message("Uploaded file exceeds the private beta size limit.")
+                .timestamp(LocalDateTime.now())
+                .build();
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(error);
+    }
+
+    @ExceptionHandler(DocumentFileTooLargeException.class)
+    public ResponseEntity<ErrorResponse> handleDocumentFileTooLarge(
+            DocumentFileTooLargeException ex) {
+        ErrorResponse error = ErrorResponse.builder()
+                .status(HttpStatus.PAYLOAD_TOO_LARGE.value())
+                .message(ex.getMessage())
                 .timestamp(LocalDateTime.now())
                 .build();
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(error);

@@ -11,7 +11,7 @@ migrations are configured. Production file writes additionally require a
 private S3-compatible bucket and managed SSE-KMS key. Approved consumers and
 Infrastructure have not completed identity, secret/key, bucket and deployment
 rollout, and production retention, reconciliation, concurrency controls and
-bounded content rules remain open. See
+integrated consumer rollout remain open. See
 [`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md).
 
 The bounded generated-document cleanup dependency from Job Finder, and the
@@ -39,12 +39,15 @@ remain required.
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-1.2.0 contract. Maven verification fails when the running contract drifts from
+1.3.0 contract. Maven verification fails when the running contract drifts from
 this file.
 
 The identity sources, least-privilege service roles, authorization matrix,
 stable denial rules and deployment dependencies are defined in
 [`docs/AUTHORIZATION_BOUNDARY.md`](docs/AUTHORIZATION_BOUNDARY.md).
+The private-beta DOCX/PDF allow-list, byte/archive limits, generated download
+names, quarantine behavior and no-paid-scanner decision are defined in
+[`docs/FILE_VALIDATION.md`](docs/FILE_VALIDATION.md).
 
 ## Build
 
@@ -60,7 +63,8 @@ owner-scoped repository queries, foreign/missing UUID equivalence,
 environment-data isolation, contract drift checks and a real PostgreSQL
 migration/application-restart/backup/restore/deletion drill, legacy BYTEA
 upgrade, object restart recovery, SSE-KMS request and checksum quarantine
-evidence. Passing it does not resolve consumer rollout, deployed platform
+evidence, plus malicious/corrupt file rejection and safe-download controls.
+Passing it does not resolve consumer rollout, deployed platform
 evidence, scheduled cross-store reconciliation or governed retention blockers.
 
 To intentionally refresh the contract after reviewing an API change:

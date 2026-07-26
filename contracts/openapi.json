@@ -9,7 +9,7 @@
     "license" : {
       "name" : "Proprietary and confidential"
     },
-    "version" : "1.2.0"
+    "version" : "1.3.0"
   },
   "servers" : [ {
     "url" : "http://localhost:8089",
@@ -111,8 +111,8 @@
     "/api/v1/documents/{generatedDocumentId}/files/upload" : {
       "post" : {
         "tags" : [ "Document Files" ],
-        "summary" : "Upload replacement file",
-        "description" : "Stores a user-uploaded DOCX or PDF replacement for a generated document",
+        "summary" : "Upload replacement DOCX",
+        "description" : "Validates and stores a user-uploaded DOCX replacement for a generated document",
         "operationId" : "uploadReplacementFile",
         "parameters" : [ {
           "name" : "generatedDocumentId",
@@ -126,10 +126,11 @@
         }, {
           "name" : "fileType",
           "in" : "query",
+          "description" : "Private beta replacement uploads support DOCX only",
           "required" : true,
           "schema" : {
             "type" : "string",
-            "enum" : [ "DOCX", "PDF" ]
+            "enum" : [ "DOCX" ]
           }
         }, {
           "name" : "source",
@@ -166,6 +167,16 @@
           }
         },
         "responses" : {
+          "413" : {
+            "description" : "Upload exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404" : {
             "description" : "Generated document not found",
             "content" : {
@@ -263,6 +274,16 @@
           "required" : true
         },
         "responses" : {
+          "413" : {
+            "description" : "Decoded file or archive exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404" : {
             "description" : "Generated document not found",
             "content" : {
@@ -787,6 +808,16 @@
                 }
               }
             }
+          },
+          "503" : {
+            "description" : "Stored file failed integrity or safety validation",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security" : [ {
@@ -1132,6 +1163,28 @@
         },
         "description" : "Response containing generated document details"
       },
+      "ErrorResponse" : {
+        "type" : "object",
+        "properties" : {
+          "status" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "message" : {
+            "type" : "string"
+          },
+          "timestamp" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "errors" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          }
+        }
+      },
       "DocumentFileResponse" : {
         "type" : "object",
         "properties" : {
@@ -1231,18 +1284,19 @@
             "enum" : [ "DOCX", "PDF", "DOCX", "PDF" ]
           },
           "fileName" : {
+            "maxLength" : 255,
             "type" : "string",
-            "description" : "Download filename",
+            "description" : "Untrusted producer filename used only for extension and safety validation; responses use a generated safe name",
             "example" : "cv.docx"
           },
           "mimeType" : {
             "type" : "string",
-            "description" : "File MIME type",
+            "description" : "Untrusted producer MIME claim validated against the declared type and content",
             "example" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           },
           "fileContentBase64" : {
             "type" : "string",
-            "description" : "Base64-encoded file bytes"
+            "description" : "Base64-encoded file bytes subject to the configured decoded byte and archive limits"
           }
         },
         "description" : "Request to store an exported document file"

@@ -7,6 +7,7 @@ import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import com.jobseekercopilot.documentstore.service.DocumentFileLifecycleService;
+import com.jobseekercopilot.documentstore.service.DocumentFileValidator;
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
 import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
@@ -34,18 +35,21 @@ public class DocumentStoreSystemDataController {
     private final ExportedDocumentFileRepository fileRepository;
     private final DocumentObjectStorage objectStorage;
     private final DocumentFileLifecycleService fileLifecycleService;
+    private final DocumentFileValidator fileValidator;
 
     public DocumentStoreSystemDataController(
             EnvironmentDataGuard guard,
             GeneratedDocumentRepository documentRepository,
             ExportedDocumentFileRepository fileRepository,
             DocumentObjectStorage objectStorage,
-            DocumentFileLifecycleService fileLifecycleService) {
+            DocumentFileLifecycleService fileLifecycleService,
+            DocumentFileValidator fileValidator) {
         this.guard = guard;
         this.documentRepository = documentRepository;
         this.fileRepository = fileRepository;
         this.objectStorage = objectStorage;
         this.fileLifecycleService = fileLifecycleService;
+        this.fileValidator = fileValidator;
     }
 
     @PostMapping("/seed/documents")
@@ -91,18 +95,29 @@ public class DocumentStoreSystemDataController {
         }
         UUID fileId = seed.id() == null ? UUID.randomUUID() : seed.id();
         int version = seed.version() == null ? 1 : seed.version();
+        FileSource source =
+                seed.source() == null ? FileSource.GENERATED : seed.source();
+        if (source == FileSource.USER_UPLOADED) {
+            fileValidator.validateUserUpload(
+                    seed.fileType(), seed.fileName(), seed.mimeType(), content);
+        } else {
+            fileValidator.validateGenerated(
+                    seed.fileType(), seed.fileName(), seed.mimeType(), content);
+        }
+        String fileName = fileValidator.safeFileName(fileId, seed.fileType());
+        String mimeType = fileValidator.canonicalMimeType(seed.fileType());
         String key = ObjectKeyFactory.forFile(document.getId(), fileId, version);
         String sha256 = ObjectIntegrity.sha256(content);
-        objectStorage.put(key, content, seed.mimeType(), sha256);
+        objectStorage.put(key, content, mimeType, sha256);
         try {
             return fileRepository.saveAndFlush(ExportedDocumentFile.builder()
                     .id(fileId)
                     .generatedDocumentId(document.getId())
                     .ownerId(document.getUserId())
                     .fileType(seed.fileType())
-                    .fileName(seed.fileName())
-                    .mimeType(seed.mimeType())
-                    .source(seed.source() == null ? FileSource.GENERATED : seed.source())
+                    .fileName(fileName)
+                    .mimeType(mimeType)
+                    .source(source)
                     .active(seed.active() == null || seed.active())
                     .version(version)
                     .storageKey(key)

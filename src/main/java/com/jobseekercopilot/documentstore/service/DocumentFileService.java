@@ -17,18 +17,13 @@ import com.jobseekercopilot.documentstore.storage.ObjectStorageException;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.util.Base64;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 @Service
 @RequiredArgsConstructor
@@ -36,26 +31,24 @@ public class DocumentFileService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentFileService.class);
 
-    public static final String DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    public static final String PDF_MIME_TYPE = "application/pdf";
-
     private final ExportedDocumentFileRepository fileRepository;
     private final GeneratedDocumentRepository documentRepository;
     private final DocumentObjectStorage objectStorage;
+    private final DocumentFileValidator fileValidator;
 
     @Transactional
     public DocumentFileResponse createDocumentFile(String ownerId, CreateDocumentFileRequest request) {
         long startedAt = System.nanoTime();
         requireOwnedDocument(ownerId, request.getGeneratedDocumentId());
-        validateFileType(request.getFileType());
-        validateFileNameAndMimeType(request.getFileName(), request.getMimeType(), request.getFileType());
-        byte[] content = Base64.getDecoder().decode(request.getFileContentBase64());
+        byte[] content = fileValidator.decodeAndValidateGenerated(
+                request.getFileType(),
+                request.getFileName(),
+                request.getMimeType(),
+                request.getFileContentBase64());
         ExportedDocumentFile saved = storeMetadataAndObject(
                 ownerId,
                 request.getGeneratedDocumentId(),
                 request.getFileType(),
-                request.getFileName(),
-                request.getMimeType(),
                 FileSource.GENERATED,
                 content);
         log.info("Generated document file saved fileType={} source={} durationMs={}",
@@ -81,25 +74,22 @@ public class DocumentFileService {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file is required");
         }
-        validateFileType(fileType);
         if (source != FileSource.USER_UPLOADED) {
             throw new IllegalArgumentException("source must be USER_UPLOADED");
         }
+        fileValidator.validateDeclaredSize(file.getSize());
 
         String fileName = file.getOriginalFilename() == null ? "" : file.getOriginalFilename();
-        validateFileNameAndMimeType(fileName, file.getContentType(), fileType);
         try {
-            if (fileType == FileType.DOCX && !hasDocxStructure(file)) {
-                throw new IllegalArgumentException("Only .docx files can be uploaded.");
-            }
+            byte[] content = file.getBytes();
+            fileValidator.validateUserUpload(
+                    fileType, fileName, file.getContentType(), content);
             ExportedDocumentFile saved = storeMetadataAndObject(
                     ownerId,
                     generatedDocumentId,
                     fileType,
-                    fileName,
-                    mimeType(fileType),
                     source,
-                    file.getBytes());
+                    content);
             log.info("Document file upload saved fileType={} source={} durationMs={}",
                     fileType,
                     source,
@@ -108,26 +98,6 @@ public class DocumentFileService {
         } catch (IOException exception) {
             throw new IllegalArgumentException("Unable to read uploaded file");
         }
-    }
-
-    private boolean hasDocxStructure(MultipartFile file) throws IOException {
-        boolean hasContentTypes = false;
-        boolean hasDocumentXml = false;
-        try (ZipInputStream zip = new ZipInputStream(file.getInputStream())) {
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                if ("[Content_Types].xml".equals(entry.getName())) {
-                    hasContentTypes = true;
-                }
-                if ("word/document.xml".equals(entry.getName())) {
-                    hasDocumentXml = true;
-                }
-                if (hasContentTypes && hasDocumentXml) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     public DocumentFileResponse getDocumentFileMetadata(String ownerId, UUID id) {
@@ -146,12 +116,23 @@ public class DocumentFileService {
             log.error("Document object integrity verification failed");
             throw new ObjectStorageException("Document object failed integrity verification");
         }
+        try {
+            fileValidator.validateStored(file.getFileType(), content);
+        } catch (IllegalArgumentException exception) {
+            file.setStorageStatus(ObjectStorageStatus.UNAVAILABLE);
+            fileRepository.save(file);
+            log.error("Document object safety validation failed");
+            throw new ObjectStorageException("Document object failed safety validation");
+        }
         log.info("Document file loaded fileType={} source={} sizeBytes={} durationMs={}",
                 file.getFileType(),
                 file.getSource(),
                 content.length,
                 (System.nanoTime() - startedAt) / 1_000_000);
-        return new DocumentFileDownload(file.getFileName(), file.getMimeType(), content);
+        return new DocumentFileDownload(
+                fileValidator.safeFileName(file.getId(), file.getFileType()),
+                fileValidator.canonicalMimeType(file.getFileType()),
+                content);
     }
 
     private ExportedDocumentFile findActiveDocumentFile(String ownerId, UUID id) {
@@ -210,8 +191,6 @@ public class DocumentFileService {
             String ownerId,
             UUID generatedDocumentId,
             FileType fileType,
-            String fileName,
-            String mimeType,
             FileSource source,
             byte[] content) {
         int version = fileRepository
@@ -221,6 +200,8 @@ public class DocumentFileService {
                 .map(current -> current + 1)
                 .orElse(1);
         UUID fileId = UUID.randomUUID();
+        String fileName = fileValidator.safeFileName(fileId, fileType);
+        String mimeType = fileValidator.canonicalMimeType(fileType);
         String storageKey = ObjectKeyFactory.forFile(generatedDocumentId, fileId, version);
         String sha256 = ObjectIntegrity.sha256(content);
         objectStorage.put(storageKey, content, mimeType, sha256);
@@ -256,39 +237,13 @@ public class DocumentFileService {
                 .orElseThrow(ResourceNotFoundException::documentNotFound);
     }
 
-    private void validateFileType(FileType fileType) {
-        if (fileType == null || (fileType != FileType.DOCX && fileType != FileType.PDF)) {
-            throw new IllegalArgumentException("Only DOCX and PDF files are supported");
-        }
-    }
-
-    private void validateFileNameAndMimeType(String fileName, String mimeType, FileType fileType) {
-        String lowerName = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
-        if (!lowerName.endsWith("." + fileType.name().toLowerCase(Locale.ROOT))) {
-            throw new IllegalArgumentException("Uploaded file extension does not match " + fileType);
-        }
-        if (mimeType == null || mimeType.isBlank() || MediaType.APPLICATION_OCTET_STREAM_VALUE.equals(mimeType)) {
-            return;
-        }
-        if (!mimeType(fileType).equals(mimeType)) {
-            throw new IllegalArgumentException("Uploaded file MIME type does not match " + fileType);
-        }
-    }
-
-    private String mimeType(FileType fileType) {
-        return switch (fileType) {
-            case DOCX -> DOCX_MIME_TYPE;
-            case PDF -> PDF_MIME_TYPE;
-        };
-    }
-
     private DocumentFileResponse mapToResponse(ExportedDocumentFile file) {
         return DocumentFileResponse.builder()
                 .id(file.getId())
                 .generatedDocumentId(file.getGeneratedDocumentId())
                 .fileType(file.getFileType())
-                .fileName(file.getFileName())
-                .mimeType(file.getMimeType())
+                .fileName(fileValidator.safeFileName(file.getId(), file.getFileType()))
+                .mimeType(fileValidator.canonicalMimeType(file.getFileType()))
                 .source(file.getSource())
                 .active(file.isActive())
                 .version(file.getVersion())

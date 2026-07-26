@@ -7,11 +7,13 @@ This service is **not beta-ready**. Its producer-side API authenticates callers
 and enforces document/file ownership, while its runtime storage boundary now
 fails closed unless durable PostgreSQL, verified TLS, managed credentials,
 managed encryption/key references, encrypted backups and reviewed Flyway
-migrations are configured. Production file writes additionally require a
+migrations are configured. Version families now have transaction-scoped
+locking, database uniqueness, retry keys and explicit restoration. Production
+file writes additionally require a
 private S3-compatible bucket and managed SSE-KMS key. Approved consumers and
 Infrastructure have not completed identity, secret/key, bucket and deployment
-rollout, and production retention, reconciliation, concurrency controls and
-integrated consumer rollout remain open. See
+rollout, and production retention, cross-store reconciliation and integrated
+consumer idempotency rollout remain open. See
 [`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md).
 
 The bounded generated-document cleanup dependency from Job Finder, and the
@@ -39,7 +41,7 @@ remain required.
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-1.3.0 contract. Maven verification fails when the running contract drifts from
+1.4.0 contract. Maven verification fails when the running contract drifts from
 this file.
 
 The identity sources, least-privilege service roles, authorization matrix,
@@ -48,6 +50,9 @@ stable denial rules and deployment dependencies are defined in
 The private-beta DOCX/PDF allow-list, byte/archive limits, generated download
 names, quarantine behavior and no-paid-scanner decision are defined in
 [`docs/FILE_VALIDATION.md`](docs/FILE_VALIDATION.md).
+The database invariants, PostgreSQL lock boundary, `Idempotency-Key` contract,
+conflict behavior and version restoration API are defined in
+[`docs/VERSION_CONCURRENCY.md`](docs/VERSION_CONCURRENCY.md).
 
 ## Build
 
@@ -63,7 +68,9 @@ owner-scoped repository queries, foreign/missing UUID equivalence,
 environment-data isolation, contract drift checks and a real PostgreSQL
 migration/application-restart/backup/restore/deletion drill, legacy BYTEA
 upgrade, object restart recovery, SSE-KMS request and checksum quarantine
-evidence, plus malicious/corrupt file rejection and safe-download controls.
+evidence, parallel version allocation, idempotent retries, transactional
+rollback and restore, plus malicious/corrupt file rejection and safe-download
+controls.
 Passing it does not resolve consumer rollout, deployed platform
 evidence, scheduled cross-store reconciliation or governed retention blockers.
 

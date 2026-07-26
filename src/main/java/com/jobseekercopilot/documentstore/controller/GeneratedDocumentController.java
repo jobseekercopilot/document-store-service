@@ -44,16 +44,21 @@ public class GeneratedDocumentController {
     @SecurityRequirement(name = "serviceToken")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Document created successfully"),
-            @ApiResponse(responseCode = "400", description = "Validation error - missing or invalid fields")
+            @ApiResponse(responseCode = "400", description = "Validation error - missing or invalid fields"),
+            @ApiResponse(responseCode = "409", description = "Version or idempotency conflict")
     })
     public ResponseEntity<GeneratedDocumentResponse> createDocument(
             @Valid @RequestBody CreateDocumentRequest request,
+            @Parameter(description = "Stable retry key; the same key and request return the original document")
+            @RequestHeader(value = "Idempotency-Key", required = false)
+            String idempotencyKey,
             @Parameter(description = "Required owner context for approved service identities")
             @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
             String requestedOwner,
             @Parameter(hidden = true) Authentication authentication) {
         String ownerId = ownerResolver.resolve(authentication, requestedOwner, request.getUserId());
-        GeneratedDocumentResponse response = service.createDocument(ownerId, request);
+        GeneratedDocumentResponse response =
+                service.createDocument(ownerId, request, idempotencyKey);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 

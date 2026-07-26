@@ -22,9 +22,11 @@ public interface GeneratedDocumentRepository extends JpaRepository<GeneratedDocu
 
     Optional<GeneratedDocument> findByIdAndUserId(UUID id, String userId);
 
+    Optional<GeneratedDocument> findByUserIdAndOperationKey(String userId, String operationKey);
+
     List<GeneratedDocument> findByDocumentType(DocumentType documentType);
 
-    List<GeneratedDocument> findByApplicationIdAndDocumentTypeAndUserIdOrderByVersionDesc(
+    Optional<GeneratedDocument> findFirstByApplicationIdAndDocumentTypeAndUserIdOrderByVersionDesc(
             String applicationId,
             DocumentType documentType,
             String userId);

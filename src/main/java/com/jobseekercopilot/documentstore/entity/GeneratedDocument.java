@@ -53,6 +53,15 @@ public class GeneratedDocument {
     @Builder.Default
     private boolean active = true;
 
+    @Column(name = "current_slot")
+    private Short currentSlot;
+
+    @Column(name = "operation_key", length = 128)
+    private String operationKey;
+
+    @Column(name = "request_sha256", length = 64)
+    private String requestSha256;
+
     private String originalFilename;
 
     @Column(nullable = false)
@@ -86,10 +95,16 @@ public class GeneratedDocument {
         if (sourceType == null) {
             sourceType = DocumentSourceType.GENERATED;
         }
+        syncCurrentSlot();
     }
 
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
+        syncCurrentSlot();
+    }
+
+    private void syncCurrentSlot() {
+        currentSlot = active ? (short) 1 : null;
     }
 }

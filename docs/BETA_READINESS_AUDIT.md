@@ -139,10 +139,13 @@ deactivated, while exported file replacements mark older files inactive.
 4. There is no draft/final/approved lifecycle, prompt version, model version,
    generation schema version, claim evidence, retention deadline, deletion
    audit, or legal-hold/export state.
-5. `nextVersion` reads then increments without locking or a uniqueness
-   constraint; concurrent writes can allocate duplicate versions.
-6. Activation/deactivation updates are not protected as one transactional,
-   constrained operation, so multiple active versions can exist.
+5. Document and exported-file version allocation is now serialized by
+   PostgreSQL transaction-scoped locks and protected by database uniqueness.
+   Stable operation keys replay the original result or return a deterministic
+   conflict when reused with a different request.
+6. Activation/deactivation and file restoration now run as one constrained
+   transaction with an enforced single-current marker. Upstream producers
+   still need to roll out stable keys under DOCGEN-09.
 7. Deactivation scans all documents in memory for an application.
 8. Application request/service logs now redact stable owner and resource
     identifiers, but audit-event coverage and log-retention policy remain
@@ -153,8 +156,9 @@ deactivated, while exported file replacements mark older files inactive.
     integrity, legacy object migration, checksum quarantine, E2E seed/reset and
     synthetic object deletion, plus malicious/corrupt content, spoofed
     metadata, archive limits and safe downloads. They do not yet cover
-    concurrent versioning, governed retention/legal hold, deployed encryption
-    or integrated consumers.
+    concurrent versioning, retry replay/conflict, rollback and restore against
+    PostgreSQL. They do not yet cover governed retention/legal hold, deployed
+    encryption or integrated consumers.
 10. Current Spring, Tomcat, Jackson, logging, and Swagger UI dependency
     findings include untriaged Critical/High advisories; the container has not
     been scanned.

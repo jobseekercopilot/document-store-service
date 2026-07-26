@@ -7,6 +7,7 @@ import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
 import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
+import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.exception.ResourceNotFoundException;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
@@ -35,9 +36,13 @@ public class DocumentFileService {
     private final GeneratedDocumentRepository documentRepository;
     private final DocumentObjectStorage objectStorage;
     private final DocumentFileValidator fileValidator;
+    private final DocumentOperationLock operationLock;
 
     @Transactional
-    public DocumentFileResponse createDocumentFile(String ownerId, CreateDocumentFileRequest request) {
+    public DocumentFileResponse createDocumentFile(
+            String ownerId,
+            CreateDocumentFileRequest request,
+            String requestedOperationKey) {
         long startedAt = System.nanoTime();
         requireOwnedDocument(ownerId, request.getGeneratedDocumentId());
         byte[] content = fileValidator.decodeAndValidateGenerated(
@@ -50,7 +55,8 @@ public class DocumentFileService {
                 request.getGeneratedDocumentId(),
                 request.getFileType(),
                 FileSource.GENERATED,
-                content);
+                content,
+                requestedOperationKey);
         log.info("Generated document file saved fileType={} source={} durationMs={}",
                 saved.getFileType(),
                 saved.getSource(),
@@ -64,7 +70,8 @@ public class DocumentFileService {
             UUID generatedDocumentId,
             MultipartFile file,
             FileType fileType,
-            FileSource source) {
+            FileSource source,
+            String requestedOperationKey) {
         long startedAt = System.nanoTime();
         log.info("Document file upload received fileType={} source={} sizeBytes={}",
                 fileType,
@@ -89,7 +96,8 @@ public class DocumentFileService {
                     generatedDocumentId,
                     fileType,
                     source,
-                    content);
+                    content,
+                    requestedOperationKey);
             log.info("Document file upload saved fileType={} source={} durationMs={}",
                     fileType,
                     source,
@@ -169,6 +177,33 @@ public class DocumentFileService {
                 .toList();
     }
 
+    @Transactional
+    public DocumentFileResponse activateFileVersion(String ownerId, UUID fileId) {
+        ExportedDocumentFile selected = fileRepository
+                .findByIdAndGeneratedDocument_UserId(fileId, ownerId)
+                .orElseThrow(ResourceNotFoundException::documentFileNotFound);
+        operationLock.acquire(lockScope(
+                "document-file-version",
+                selected.getGeneratedDocumentId(),
+                selected.getFileType()));
+        selected = fileRepository
+                .findByIdAndGeneratedDocument_UserId(fileId, ownerId)
+                .orElseThrow(ResourceNotFoundException::documentFileNotFound);
+        if (selected.getStorageStatus() != ObjectStorageStatus.AVAILABLE) {
+            throw ResourceNotFoundException.documentFileNotFound();
+        }
+        if (selected.isActive()) {
+            return mapToResponse(selected);
+        }
+        deactivateCurrentFile(
+                ownerId, selected.getGeneratedDocumentId(), selected.getFileType());
+        selected.setActive(true);
+        ExportedDocumentFile restored = fileRepository.saveAndFlush(selected);
+        log.info("Previous document file version restored fileType={} version={}",
+                restored.getFileType(), restored.getVersion());
+        return mapToResponse(restored);
+    }
+
     private void deactivateCurrentFile(
             String ownerId,
             UUID generatedDocumentId,
@@ -180,7 +215,7 @@ public class DocumentFileService {
                                 ownerId,
                                 fileType);
         activeFiles.forEach(file -> file.setActive(false));
-        fileRepository.saveAll(activeFiles);
+        fileRepository.saveAllAndFlush(activeFiles);
         if (!activeFiles.isEmpty()) {
             log.info("Previous active document files deactivated fileType={} count={}",
                     fileType, activeFiles.size());
@@ -192,7 +227,30 @@ public class DocumentFileService {
             UUID generatedDocumentId,
             FileType fileType,
             FileSource source,
-            byte[] content) {
+            byte[] content,
+            String requestedOperationKey) {
+        String operationKey = IdempotencyKeys.validate(requestedOperationKey);
+        String requestSha256 = OperationFingerprint.sha256(
+                generatedDocumentId,
+                fileType,
+                source,
+                OperationFingerprint.contentSha256(content));
+        if (operationKey != null) {
+            operationLock.acquire(lockScope(
+                    "document-file-idempotency", ownerId, operationKey));
+            ExportedDocumentFile replay = fileRepository
+                    .findByOwnerIdAndOperationKey(ownerId, operationKey)
+                    .orElse(null);
+            if (replay != null) {
+                requireMatchingFingerprint(replay.getRequestSha256(), requestSha256);
+                log.info("Document file idempotent retry replayed fileType={} version={}",
+                        replay.getFileType(), replay.getVersion());
+                return replay;
+            }
+        }
+
+        operationLock.acquire(lockScope(
+                "document-file-version", generatedDocumentId, fileType));
         int version = fileRepository
                 .findFirstByGeneratedDocumentIdAndFileTypeOrderByVersionDesc(
                         generatedDocumentId, fileType)
@@ -217,6 +275,8 @@ public class DocumentFileService {
                     .source(source)
                     .active(true)
                     .version(version)
+                    .operationKey(operationKey)
+                    .requestSha256(operationKey == null ? null : requestSha256)
                     .storageKey(storageKey)
                     .contentSize(content.length)
                     .contentSha256(sha256)
@@ -230,6 +290,17 @@ public class DocumentFileService {
             }
             throw exception;
         }
+    }
+
+    private void requireMatchingFingerprint(String stored, String requested) {
+        if (!requested.equals(stored)) {
+            throw new OperationConflictException(
+                    "Idempotency-Key was already used for a different document file operation.");
+        }
+    }
+
+    private String lockScope(String prefix, Object... parts) {
+        return prefix + ":" + OperationFingerprint.sha256(parts);
     }
 
     private void requireOwnedDocument(String ownerId, UUID generatedDocumentId) {

@@ -81,6 +81,56 @@ class GeneratedDocumentControllerIntegrationTest {
     }
 
     @Test
+    void createDocument_IdempotencyKeyReplaysAndRejectsDifferentRequest() throws Exception {
+        CreateDocumentRequest request = CreateDocumentRequest.builder()
+                .userId("user-123")
+                .jobId("job-456")
+                .applicationId("application-123")
+                .documentType(DocumentType.CV)
+                .title("Java Developer CV")
+                .content("Generated CV content...")
+                .build();
+
+        String first = mockMvc.perform(post("/api/v1/documents")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
+                        .header("Idempotency-Key", "generate-application-123-cv")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.version").value(1))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String replay = mockMvc.perform(post("/api/v1/documents")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
+                        .header("Idempotency-Key", "generate-application-123-cv")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        org.junit.jupiter.api.Assertions.assertEquals(
+                objectMapper.readTree(first).path("id").asText(),
+                objectMapper.readTree(replay).path("id").asText());
+        request.setContent("Different content");
+        mockMvc.perform(post("/api/v1/documents")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
+                        .header("Idempotency-Key", "generate-application-123-cv")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message")
+                        .value("Idempotency-Key was already used for a different document operation."));
+        org.junit.jupiter.api.Assertions.assertEquals(
+                1, repository.findByUserId("user-123").size());
+    }
+
+    @Test
     void getDocumentById_WhenExists_ShouldReturn200() throws Exception {
         GeneratedDocument saved = repository.save(GeneratedDocument.builder()
                 .userId("user-123")

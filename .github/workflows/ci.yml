@@ -20,5 +20,10 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: maven
-      - name: Verify
-        run: mvn -B clean verify
+      - name: Reject copied build artefacts
+        run: |
+          test -z "$(find . -path './.git' -prune -o \( -name target -o -name libs -o -name '*.jar' -o -name '*.class' \) -print)"
+      - name: Build and test
+        run: mvn -B --no-transfer-progress clean verify
+      - name: Build source-only container
+        run: docker build --tag local/document-store-service:ci .

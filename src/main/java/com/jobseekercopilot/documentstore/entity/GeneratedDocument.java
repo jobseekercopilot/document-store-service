@@ -5,7 +5,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -43,7 +42,6 @@ public class GeneratedDocument {
     @Column(nullable = false)
     private String title;
 
-    @Lob
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 

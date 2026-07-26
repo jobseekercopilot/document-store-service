@@ -75,6 +75,14 @@ public class DocumentSecurityConfig {
                                 DocumentAuthorities.READER)
                         .requestMatchers(HttpMethod.POST, "/api/v1/document-files")
                         .hasAuthority(DocumentAuthorities.PRODUCER)
+                        .requestMatchers(
+                                HttpMethod.PATCH,
+                                "/api/v1/documents/*/legal-hold")
+                        .hasAuthority(DocumentAuthorities.RETENTION_ADMIN)
+                        .requestMatchers(
+                                HttpMethod.DELETE,
+                                "/api/v1/documents/*/purge")
+                        .hasAuthority(DocumentAuthorities.RETENTION_ADMIN)
                         .requestMatchers(HttpMethod.POST, "/api/v1/**")
                         .hasAnyAuthority(
                                 DocumentAuthorities.USER,

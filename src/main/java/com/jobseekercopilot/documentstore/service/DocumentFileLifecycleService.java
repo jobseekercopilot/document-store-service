@@ -33,7 +33,8 @@ public class DocumentFileLifecycleService {
         for (ExportedDocumentFile file : files) {
             objectStorage.delete(file.getStorageKey());
         }
-        fileRepository.deleteAllInBatch(files);
+        fileRepository.deleteAll(files);
+        fileRepository.flush();
         return files.size();
     }
 

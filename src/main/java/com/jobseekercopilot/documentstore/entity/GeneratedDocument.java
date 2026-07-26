@@ -62,6 +62,11 @@ public class GeneratedDocument {
     @Builder.Default
     private DocumentLifecycleState lifecycleState = DocumentLifecycleState.DRAFT;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private DocumentRetentionState retentionState = DocumentRetentionState.AVAILABLE;
+
     @Column(length = 64)
     private String contentSha256;
 
@@ -71,6 +76,27 @@ public class GeneratedDocument {
     private LocalDateTime approvedAt;
 
     private String approvedBy;
+
+    private LocalDateTime archivedAt;
+
+    private String archivedBy;
+
+    private LocalDateTime deletedAt;
+
+    private String deletedBy;
+
+    private LocalDateTime purgeEligibleAt;
+
+    @Column(nullable = false)
+    @Builder.Default
+    private boolean legalHold = false;
+
+    @Column(length = 128)
+    private String legalHoldReference;
+
+    private LocalDateTime legalHoldUpdatedAt;
+
+    private String legalHoldUpdatedBy;
 
     @Column(name = "current_slot")
     private Short currentSlot;
@@ -120,7 +146,13 @@ public class GeneratedDocument {
         if (lifecycleState == null) {
             lifecycleState = DocumentLifecycleState.DRAFT;
         }
+        if (retentionState == null) {
+            retentionState = DocumentRetentionState.AVAILABLE;
+        }
         if (lifecycleState == DocumentLifecycleState.DRAFT) {
+            active = false;
+        }
+        if (retentionState != DocumentRetentionState.AVAILABLE) {
             active = false;
         }
         syncCurrentSlot();
@@ -133,6 +165,9 @@ public class GeneratedDocument {
     }
 
     private void syncCurrentSlot() {
+        if (retentionState != DocumentRetentionState.AVAILABLE) {
+            active = false;
+        }
         currentSlot = active ? (short) 1 : null;
     }
 }

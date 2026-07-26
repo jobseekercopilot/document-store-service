@@ -149,9 +149,13 @@ class DocumentLifecycleIntegrationTest {
 
         mockMvc.perform(delete("/api/v1/documents/{id}", firstId)
                         .headers(serviceHeaders(OWNER)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.message")
-                        .value("Approved document versions require retention-aware deletion."));
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/v1/documents/{id}", firstId)
+                        .headers(serviceHeaders(OWNER)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.retentionState").value("DELETED"))
+                .andExpect(jsonPath("$.current").value(false))
+                .andExpect(jsonPath("$.purgeEligibleAt").isNotEmpty());
     }
 
     @Test

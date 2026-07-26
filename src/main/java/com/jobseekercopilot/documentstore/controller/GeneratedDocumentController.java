@@ -3,9 +3,12 @@ package com.jobseekercopilot.documentstore.controller;
 import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
 import com.jobseekercopilot.documentstore.dto.DocumentReferenceResponse;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
+import com.jobseekercopilot.documentstore.dto.DocumentLifecycleEventResponse;
+import com.jobseekercopilot.documentstore.dto.LegalHoldRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.service.GeneratedDocumentService;
+import com.jobseekercopilot.documentstore.service.DocumentRetentionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -37,6 +40,7 @@ import java.util.UUID;
 public class GeneratedDocumentController {
 
     private final GeneratedDocumentService service;
+    private final DocumentRetentionService retentionService;
     private final DocumentOwnerResolver ownerResolver;
 
     @PostMapping
@@ -139,11 +143,13 @@ public class GeneratedDocumentController {
     }
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "Delete a document")
+    @Operation(
+            summary = "Soft-delete a document",
+            description = "Starts the configured recovery window without immediately removing content or files")
     @SecurityRequirement(name = "bearerAuth")
     @SecurityRequirement(name = "serviceToken")
     @ApiResponses(value = {
-            @ApiResponse(responseCode = "204", description = "Document deleted successfully"),
+            @ApiResponse(responseCode = "204", description = "Document is soft deleted"),
             @ApiResponse(responseCode = "404", description = "Document not found")
     })
     public ResponseEntity<Void> deleteDocument(
@@ -153,7 +159,85 @@ public class GeneratedDocumentController {
             String requestedOwner,
             @Parameter(hidden = true) Authentication authentication) {
         String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
-        service.deleteDocument(ownerId, id);
+        service.deleteDocument(ownerId, id, authentication.getName());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/{documentId}/archive")
+    @Operation(summary = "Archive an available document")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
+    public ResponseEntity<GeneratedDocumentResponse> archiveDocument(
+            @PathVariable UUID documentId,
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(retentionService.archive(
+                ownerId, documentId, authentication.getName()));
+    }
+
+    @PatchMapping("/{documentId}/restore")
+    @Operation(
+            summary = "Restore an archived or soft-deleted document",
+            description = "Restores availability without selecting the version as current")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
+    public ResponseEntity<GeneratedDocumentResponse> restoreDocument(
+            @PathVariable UUID documentId,
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(retentionService.restore(
+                ownerId, documentId, authentication.getName()));
+    }
+
+    @GetMapping("/{documentId}/lifecycle-events")
+    @Operation(summary = "List the owner-scoped document lifecycle audit")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
+    public ResponseEntity<List<DocumentLifecycleEventResponse>> lifecycleEvents(
+            @PathVariable UUID documentId,
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(retentionService.events(ownerId, documentId));
+    }
+
+    @PatchMapping("/{documentId}/legal-hold")
+    @Operation(
+            summary = "Apply or release a legal hold",
+            description = "Requires the dedicated retention-administrator service identity")
+    @SecurityRequirement(name = "serviceToken")
+    public ResponseEntity<GeneratedDocumentResponse> setLegalHold(
+            @PathVariable UUID documentId,
+            @Valid @RequestBody LegalHoldRequest request,
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(retentionService.setLegalHold(
+                ownerId,
+                documentId,
+                request.isActive(),
+                request.getReference(),
+                authentication.getName()));
+    }
+
+    @DeleteMapping("/{documentId}/purge")
+    @Operation(
+            summary = "Irreversibly purge an eligible document",
+            description = "Fail-closed retention-admin operation; disabled until an approved policy is configured")
+    @SecurityRequirement(name = "serviceToken")
+    public ResponseEntity<Void> purgeDocument(
+            @PathVariable UUID documentId,
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        retentionService.purge(ownerId, documentId, authentication.getName());
         return ResponseEntity.noContent().build();
     }
 

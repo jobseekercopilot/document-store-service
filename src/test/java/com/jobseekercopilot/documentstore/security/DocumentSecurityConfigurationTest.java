@@ -9,17 +9,21 @@ class DocumentSecurityConfigurationTest {
 
     private static final String PRODUCER = "producer-token-with-at-least-32-bytes";
     private static final String READER = "reader-token-with-at-least-32-bytes-value";
+    private static final String RETENTION =
+            "retention-token-with-at-least-32-bytes";
     private static final String ENVIRONMENT = "environment-token-with-at-least-32-bytes";
 
     @Test
     void serviceCredentialsResolveOnlyTheirOwnAuthority() {
         DocumentSecurityCredentials credentials =
-                new DocumentSecurityCredentials(PRODUCER, READER, ENVIRONMENT);
+                new DocumentSecurityCredentials(PRODUCER, READER, RETENTION, ENVIRONMENT);
 
         assertThat(credentials.authorityForServiceToken(PRODUCER))
                 .contains(DocumentAuthorities.PRODUCER);
         assertThat(credentials.authorityForServiceToken(READER))
                 .contains(DocumentAuthorities.READER);
+        assertThat(credentials.authorityForServiceToken(RETENTION))
+                .contains(DocumentAuthorities.RETENTION_ADMIN);
         assertThat(credentials.authorityForServiceToken("wrong-token")).isEmpty();
         assertThat(credentials.matchesEnvironmentDataToken(ENVIRONMENT)).isTrue();
         assertThat(credentials.matchesEnvironmentDataToken(PRODUCER)).isFalse();
@@ -28,19 +32,25 @@ class DocumentSecurityConfigurationTest {
     @Test
     void serviceCredentialsRejectMissingShortOrSharedTokens() {
         assertThatThrownBy(() ->
-                new DocumentSecurityCredentials("", READER, ENVIRONMENT))
+                new DocumentSecurityCredentials("", READER, RETENTION, ENVIRONMENT))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Document producer token must contain at least 32 bytes.");
         assertThatThrownBy(() ->
-                new DocumentSecurityCredentials("short", READER, ENVIRONMENT))
+                new DocumentSecurityCredentials("short", READER, RETENTION, ENVIRONMENT))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Document producer token must contain at least 32 bytes.");
         assertThatThrownBy(() ->
-                new DocumentSecurityCredentials(PRODUCER, PRODUCER, ENVIRONMENT))
+                new DocumentSecurityCredentials(
+                        PRODUCER, PRODUCER, RETENTION, ENVIRONMENT))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Document security tokens must be distinct.");
         assertThatThrownBy(() ->
-                new DocumentSecurityCredentials(PRODUCER, READER, READER))
+                new DocumentSecurityCredentials(PRODUCER, READER, READER, ENVIRONMENT))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Document security tokens must be distinct.");
+        assertThatThrownBy(() ->
+                new DocumentSecurityCredentials(
+                        PRODUCER, READER, RETENTION, RETENTION))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Document security tokens must be distinct.");
     }

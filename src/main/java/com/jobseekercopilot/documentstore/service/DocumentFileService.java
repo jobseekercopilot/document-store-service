@@ -4,6 +4,7 @@ import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
 import com.jobseekercopilot.documentstore.dto.DocumentFileDownload;
 import com.jobseekercopilot.documentstore.dto.DocumentFileResponse;
 import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
+import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
@@ -44,7 +45,7 @@ public class DocumentFileService {
             CreateDocumentFileRequest request,
             String requestedOperationKey) {
         long startedAt = System.nanoTime();
-        requireOwnedDocument(ownerId, request.getGeneratedDocumentId());
+        requireOwnedMutableDocument(ownerId, request.getGeneratedDocumentId());
         byte[] content = fileValidator.decodeAndValidateGenerated(
                 request.getFileType(),
                 request.getFileName(),
@@ -77,7 +78,7 @@ public class DocumentFileService {
                 fileType,
                 source,
                 file == null ? 0 : file.getSize());
-        requireOwnedDocument(ownerId, generatedDocumentId);
+        requireOwnedMutableDocument(ownerId, generatedDocumentId);
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file is required");
         }
@@ -146,6 +147,7 @@ public class DocumentFileService {
     private ExportedDocumentFile findActiveDocumentFile(String ownerId, UUID id) {
         ExportedDocumentFile file = fileRepository.findByIdAndGeneratedDocument_UserId(id, ownerId)
                 .orElseThrow(ResourceNotFoundException::documentFileNotFound);
+        requireOwnedVisibleDocument(ownerId, file.getGeneratedDocumentId());
         if (!file.isActive() || file.getStorageStatus() != ObjectStorageStatus.AVAILABLE) {
             log.warn("Inactive or unavailable document file access rejected");
             throw ResourceNotFoundException.documentFileNotFound();
@@ -154,7 +156,7 @@ public class DocumentFileService {
     }
 
     public List<DocumentFileResponse> getFilesForDocument(String ownerId, UUID generatedDocumentId) {
-        requireOwnedDocument(ownerId, generatedDocumentId);
+        requireOwnedVisibleDocument(ownerId, generatedDocumentId);
         return fileRepository
                 .findByGeneratedDocumentIdAndGeneratedDocument_UserIdOrderByCreatedAtDesc(
                         generatedDocumentId,
@@ -167,7 +169,7 @@ public class DocumentFileService {
     public List<DocumentFileResponse> getLatestFilesForDocument(
             String ownerId,
             UUID generatedDocumentId) {
-        requireOwnedDocument(ownerId, generatedDocumentId);
+        requireOwnedVisibleDocument(ownerId, generatedDocumentId);
         return fileRepository
                 .findByGeneratedDocumentIdAndGeneratedDocument_UserIdAndActiveTrueOrderByUpdatedAtDesc(
                         generatedDocumentId,
@@ -182,6 +184,7 @@ public class DocumentFileService {
         ExportedDocumentFile selected = fileRepository
                 .findByIdAndGeneratedDocument_UserId(fileId, ownerId)
                 .orElseThrow(ResourceNotFoundException::documentFileNotFound);
+        requireOwnedMutableDocument(ownerId, selected.getGeneratedDocumentId());
         operationLock.acquire(lockScope(
                 "document-file-version",
                 selected.getGeneratedDocumentId(),
@@ -316,9 +319,25 @@ public class DocumentFileService {
         return prefix + ":" + OperationFingerprint.sha256(parts);
     }
 
-    private void requireOwnedDocument(String ownerId, UUID generatedDocumentId) {
-        documentRepository.findByIdAndUserId(generatedDocumentId, ownerId)
+    private void requireOwnedMutableDocument(String ownerId, UUID generatedDocumentId) {
+        var initial = documentRepository.findByIdAndUserId(generatedDocumentId, ownerId)
                 .orElseThrow(ResourceNotFoundException::documentNotFound);
+        operationLock.acquire(lockScope(
+                "document-family", ownerId, initial.getDocumentFamilyId()));
+        var document = documentRepository.findByIdAndUserId(generatedDocumentId, ownerId)
+                .orElseThrow(ResourceNotFoundException::documentNotFound);
+        if (document.getRetentionState() != DocumentRetentionState.AVAILABLE) {
+            throw new OperationConflictException(
+                    "Archived or deleted documents cannot accept file changes.");
+        }
+    }
+
+    private void requireOwnedVisibleDocument(String ownerId, UUID generatedDocumentId) {
+        var document = documentRepository.findByIdAndUserId(generatedDocumentId, ownerId)
+                .orElseThrow(ResourceNotFoundException::documentNotFound);
+        if (document.getRetentionState() == DocumentRetentionState.DELETED) {
+            throw ResourceNotFoundException.documentNotFound();
+        }
     }
 
     private DocumentFileResponse mapToResponse(ExportedDocumentFile file) {

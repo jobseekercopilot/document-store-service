@@ -12,6 +12,8 @@ DOC-05 file-validation update: 2026-07-26
 
 DOC-08 storage-reconciliation update: 2026-07-26
 
+DOC-09 retention-lifecycle update: 2026-07-26
+
 Status: **Not ready for private beta**
 
 ## STORE-01 producer boundary
@@ -132,6 +134,43 @@ completed on both runs. All synthetic containers and the isolated network were
 removed. This is repository and local-container evidence, not a deployed AWS
 control.
 
+## DOC-09 retention-lifecycle boundary
+
+Document approval (`DRAFT`/`APPROVED`) is now separate from retention
+(`AVAILABLE`/`ARCHIVED`/`DELETED`). Archive, restore and normal deletion are
+owner-scoped, family-locked and retry-safe. Archive and deletion deselect the
+version; restore never silently selects it. Soft deletion retains text,
+metadata and binaries for recovery while blocking file access, mutation,
+approval, current selection and new application references.
+
+Irreversible purge requires a distinct retention-administrator identity, an
+explicit approved-policy version and enable flag, an expired recovery window,
+no legal hold, no local application link and no unresolved `PREPARED` storage
+operation. It removes Store text, metadata and objects while retaining a
+bounded content-free audit event. Bounded maintenance can remove only expired
+completed journal rows and lifecycle events; it is disabled and fail-closed
+without an approved policy and never deletes `PREPARED` rows or reconciliation
+cursors.
+
+The proposed periods, exact user copy, support/legal-hold process, backup and
+export boundaries, and production approval checklist are published in
+[`RETENTION_AND_PURGE.md`](RETENTION_AND_PURGE.md). This repository slice does
+not constitute product/legal/privacy approval. Client recovery UX,
+Application Tracker reference reconciliation, managed backup expiry,
+administrator credential deployment and integrated cross-user evidence remain
+beta dependencies; production purge and maintenance therefore remain off.
+
+Local verification passed `mvn -B --no-transfer-progress -Ddebug=false clean
+verify`: 93 tests, zero failures, zero errors and zero skipped. It includes the
+V6 lifecycle schema on real PostgreSQL 15, cross-owner transition denial,
+repeat-safe archive/restore/delete/purge, protected application history, legal
+hold, retained recovery bytes, `PREPARED` journal protection and bounded
+completed-audit cleanup. This is repository evidence, not production policy or
+AWS deployment evidence. The source Dockerfile also built successfully, and
+the resulting image migrated a disposable PostgreSQL 15 database through V6
+and returned `{"status":"UP"}`. The synthetic containers and network were
+removed afterward.
+
 ## Verified responsibility
 
 The service stores generated CV/cover-letter text in `GeneratedDocument`, file
@@ -169,9 +208,10 @@ deactivated, while exported file replacements mark older files inactive.
    includes bounded scheduled reconciliation, but the deployed private bucket,
    ECS task-role credentials, KMS key, alerts, object backup/versioning and
    restore evidence remain owned by Infrastructure.
-4. There is no draft/final/approved lifecycle, prompt version, model version,
-   generation schema version, claim evidence, retention deadline, deletion
-   audit, or legal-hold/export state.
+4. Draft/approved and retention state, generation provenance, recovery
+   deadlines, lifecycle audit and legal-hold/purge guards now exist in this
+   repository. Product/legal policy approval, client copy, cross-service
+   application-link protection and platform backup/log expiry remain open.
 5. Document and exported-file version allocation is now serialized by
    PostgreSQL transaction-scoped locks and protected by database uniqueness.
    Stable operation keys replay the original result or return a deterministic
@@ -179,19 +219,22 @@ deactivated, while exported file replacements mark older files inactive.
 6. Activation/deactivation and file restoration now run as one constrained
    transaction with an enforced single-current marker. Upstream producers
    still need to roll out stable keys under DOCGEN-09.
-7. Deactivation scans all documents in memory for an application.
-8. Application request/service logs now redact stable owner and resource
-    identifiers, but audit-event coverage and log-retention policy remain
-    incomplete.
+7. The deprecated application deactivation compatibility path remains a no-op;
+   Application Tracker reference lifecycle still needs integrated
+   reconciliation under APP-08.
+8. Application request/service logs redact stable owner and resource
+   identifiers, and lifecycle events record content-free transitions. Deployed
+   log-retention and audit-access policy remain incomplete.
 9. Tests now cover authentication, service least privilege, owner and
     cross-user denial, happy-path CRUD/replacement, production configuration,
     PostgreSQL migration/application-restart persistence, backup/restore
     integrity, legacy object migration, checksum quarantine, E2E seed/reset and
-    synthetic object deletion, plus malicious/corrupt content, spoofed
-    metadata, archive limits and safe downloads. They do not yet cover
-    concurrent versioning, retry replay/conflict, rollback and restore against
-    PostgreSQL. They do not yet cover governed retention/legal hold, deployed
-    encryption or integrated consumers.
+    synthetic object deletion, malicious/corrupt content, spoofed metadata,
+    archive limits, safe downloads, concurrent versioning, retry
+    replay/conflict, rollback/restore, retention transitions, legal hold,
+    guarded purge and completed-journal retention. They do not cover
+    product/legal policy approval, deployed encryption/backup expiry or
+    integrated consumers.
 10. Current Spring, Tomcat, Jackson, logging, and Swagger UI dependency
     findings include untriaged Critical/High advisories; the container has not
     been scanned.

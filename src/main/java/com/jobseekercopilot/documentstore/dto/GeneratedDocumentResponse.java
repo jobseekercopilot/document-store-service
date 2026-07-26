@@ -3,6 +3,7 @@ package com.jobseekercopilot.documentstore.dto;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
+import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -54,6 +55,9 @@ public class GeneratedDocumentResponse {
 
     private DocumentLifecycleState lifecycleState;
 
+    @Schema(description = "Recoverable retention state")
+    private DocumentRetentionState retentionState;
+
     @Schema(description = "SHA-256 of the stored text content")
     private String contentSha256;
 
@@ -62,6 +66,15 @@ public class GeneratedDocumentResponse {
     private LocalDateTime approvedAt;
 
     private String approvedBy;
+
+    private LocalDateTime archivedAt;
+
+    private LocalDateTime deletedAt;
+
+    @Schema(description = "Earliest time an authorized purge may be considered")
+    private LocalDateTime purgeEligibleAt;
+
+    private boolean legalHold;
 
     @Schema(description = "Original filename for uploaded documents")
     private String originalFilename;

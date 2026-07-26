@@ -13,6 +13,7 @@ public class DocumentSecurityCredentials {
 
     private final byte[] producerToken;
     private final byte[] readerToken;
+    private final byte[] retentionAdminToken;
     private final byte[] environmentDataToken;
 
     public DocumentSecurityCredentials(
@@ -20,14 +21,21 @@ public class DocumentSecurityCredentials {
             String producerToken,
             @Value("${document-store.security.service-identity.reader-token}")
             String readerToken,
+            @Value("${document-store.security.service-identity.retention-admin-token}")
+            String retentionAdminToken,
             @Value("${document-store.security.environment-data-token}")
             String environmentDataToken) {
         this.producerToken = validate(producerToken, "Document producer token");
         this.readerToken = validate(readerToken, "Document reader token");
+        this.retentionAdminToken =
+                validate(retentionAdminToken, "Document retention administrator token");
         this.environmentDataToken = validate(environmentDataToken, "Environment-data token");
         requireDistinct(this.producerToken, this.readerToken);
+        requireDistinct(this.producerToken, this.retentionAdminToken);
         requireDistinct(this.producerToken, this.environmentDataToken);
+        requireDistinct(this.readerToken, this.retentionAdminToken);
         requireDistinct(this.readerToken, this.environmentDataToken);
+        requireDistinct(this.retentionAdminToken, this.environmentDataToken);
     }
 
     public Optional<String> authorityForServiceToken(String candidate) {
@@ -36,6 +44,9 @@ public class DocumentSecurityCredentials {
         }
         if (matches(readerToken, candidate)) {
             return Optional.of(DocumentAuthorities.READER);
+        }
+        if (matches(retentionAdminToken, candidate)) {
+            return Optional.of(DocumentAuthorities.RETENTION_ADMIN);
         }
         return Optional.empty();
     }

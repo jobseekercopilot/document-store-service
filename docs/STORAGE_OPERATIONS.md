@@ -121,6 +121,10 @@ The production operator sequence is:
    file metadata and document metadata are absent; and
 7. destroy both isolated recovery stores according to the retention policy.
 
+Normal user deletion is now a soft delete and does not remove objects. The
+synthetic hard-removal step above represents the guarded administrator purge
+path after its eligibility checks, not a normal user request.
+
 ## Local and test profile
 
 H2 is a test-scoped dependency only. Maven tests explicitly select an H2
@@ -148,5 +152,7 @@ persistence/recovery evidence.
 - Unknown orphan objects are reported but never automatically deleted. Follow
   the guarded procedure in
   [`STORAGE_RECONCILIATION.md`](STORAGE_RECONCILIATION.md).
-- Lifecycle deletion, retention, legal hold and user-facing recovery remain
-  owned by DOC-09; this runbook proves only the storage-layer synthetic drill.
+- Lifecycle deletion, retention and legal-hold guards are defined in
+  [`RETENTION_AND_PURGE.md`](RETENTION_AND_PURGE.md). Product/legal approval,
+  the client recovery journey and matching managed-backup expiry remain open;
+  this runbook proves only the storage-layer synthetic drill.

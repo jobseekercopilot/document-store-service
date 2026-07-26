@@ -152,6 +152,10 @@ class DocumentSecurityIntegrationTest {
                         .andReturn(),
                 "Document file not found.");
 
+        mockMvc.perform(patch("/api/v1/document-files/{id}/active", aliceFile.getId())
+                        .header(HttpHeaders.AUTHORIZATION, authorization("bob")))
+                .andExpect(status().isNotFound());
+
         mockMvc.perform(get("/api/v1/documents/user/{userId}", "alice")
                         .header(HttpHeaders.AUTHORIZATION, authorization("bob")))
                 .andExpect(status().isNotFound());

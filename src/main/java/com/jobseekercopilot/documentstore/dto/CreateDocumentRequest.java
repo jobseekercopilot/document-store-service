@@ -5,6 +5,7 @@ import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -41,6 +42,7 @@ public class CreateDocumentRequest {
     private String content;
 
     @Schema(description = "Version number for this application/document type", example = "2")
+    @Positive(message = "version must be positive")
     private Integer version;
 
     @Schema(description = "Whether this version is active", example = "false")

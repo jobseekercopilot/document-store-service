@@ -27,6 +27,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -55,17 +56,21 @@ public class DocumentFileController {
                     responseCode = "413",
                     description = "Decoded file or archive exceeds a configured safety limit",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "404", description = "Generated document not found")
+            @ApiResponse(responseCode = "404", description = "Generated document not found"),
+            @ApiResponse(responseCode = "409", description = "Idempotency conflict")
     })
     public ResponseEntity<DocumentFileResponse> createDocumentFile(
             @Valid @RequestBody CreateDocumentFileRequest request,
+            @Parameter(description = "Stable retry key; the same key and bytes return the original file")
+            @RequestHeader(value = "Idempotency-Key", required = false)
+            String idempotencyKey,
             @Parameter(description = "Required owner context for approved producer identities")
             @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
             String requestedOwner,
             @Parameter(hidden = true) Authentication authentication) {
         String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(service.createDocumentFile(ownerId, request));
+                .body(service.createDocumentFile(ownerId, request, idempotencyKey));
     }
 
     @PostMapping(value = "/api/v1/documents/{generatedDocumentId}/files/upload",
@@ -80,7 +85,8 @@ public class DocumentFileController {
                     responseCode = "413",
                     description = "Upload exceeds a configured safety limit",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "404", description = "Generated document not found")
+            @ApiResponse(responseCode = "404", description = "Generated document not found"),
+            @ApiResponse(responseCode = "409", description = "Idempotency conflict")
     })
     public ResponseEntity<DocumentFileResponse> uploadReplacementFile(
             @Parameter(description = "UUID of the generated document") @PathVariable UUID generatedDocumentId,
@@ -90,6 +96,9 @@ public class DocumentFileController {
                     schema = @Schema(allowableValues = {"DOCX"}))
             @RequestParam("fileType") FileType fileType,
             @RequestParam(value = "source", defaultValue = "USER_UPLOADED") FileSource source,
+            @Parameter(description = "Stable retry key; the same key and bytes return the original file")
+            @RequestHeader(value = "Idempotency-Key", required = false)
+            String idempotencyKey,
             @Parameter(description = "Required owner context for approved service identities")
             @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
             String requestedOwner,
@@ -101,7 +110,28 @@ public class DocumentFileController {
                         generatedDocumentId,
                         file,
                         fileType,
-                        source));
+                        source,
+                        idempotencyKey));
+    }
+
+    @PatchMapping("/api/v1/document-files/{id}/active")
+    @Operation(
+            summary = "Restore an exported file version",
+            description = "Atomically makes a retained available version current for its document and file type")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "File version is current"),
+            @ApiResponse(responseCode = "404", description = "Exported file version not found or unavailable")
+    })
+    public ResponseEntity<DocumentFileResponse> activateFileVersion(
+            @Parameter(description = "UUID of the retained exported file") @PathVariable UUID id,
+            @Parameter(description = "Required owner context for approved service identities")
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(service.activateFileVersion(ownerId, id));
     }
 
     @GetMapping("/api/v1/document-files/{id}")

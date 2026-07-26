@@ -9,7 +9,7 @@
     "license" : {
       "name" : "Proprietary and confidential"
     },
-    "version" : "1.3.0"
+    "version" : "1.4.0"
   },
   "servers" : [ {
     "url" : "http://localhost:8089",
@@ -61,6 +61,14 @@
         "description" : "Stores a generated document (CV or cover letter)",
         "operationId" : "createDocument",
         "parameters" : [ {
+          "name" : "Idempotency-Key",
+          "in" : "header",
+          "description" : "Stable retry key; the same key and request return the original document",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
           "name" : "X-Document-Owner",
           "in" : "header",
           "description" : "Required owner context for approved service identities",
@@ -92,6 +100,16 @@
           },
           "400" : {
             "description" : "Validation error - missing or invalid fields",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/GeneratedDocumentResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Version or idempotency conflict",
             "content" : {
               "*/*" : {
                 "schema" : {
@@ -142,6 +160,14 @@
             "enum" : [ "GENERATED", "USER_UPLOADED" ]
           }
         }, {
+          "name" : "Idempotency-Key",
+          "in" : "header",
+          "description" : "Stable retry key; the same key and bytes return the original file",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
           "name" : "X-Document-Owner",
           "in" : "header",
           "description" : "Required owner context for approved service identities",
@@ -167,22 +193,32 @@
           }
         },
         "responses" : {
-          "413" : {
-            "description" : "Upload exceeds a configured safety limit",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "404" : {
             "description" : "Generated document not found",
             "content" : {
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Idempotency conflict",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          },
+          "413" : {
+            "description" : "Upload exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -255,6 +291,14 @@
         "description" : "Stores exported DOCX or PDF bytes for a generated document",
         "operationId" : "createDocumentFile",
         "parameters" : [ {
+          "name" : "Idempotency-Key",
+          "in" : "header",
+          "description" : "Stable retry key; the same key and bytes return the original file",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
           "name" : "X-Document-Owner",
           "in" : "header",
           "description" : "Required owner context for approved producer identities",
@@ -274,16 +318,6 @@
           "required" : true
         },
         "responses" : {
-          "413" : {
-            "description" : "Decoded file or archive exceeds a configured safety limit",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "404" : {
             "description" : "Generated document not found",
             "content" : {
@@ -310,6 +344,26 @@
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Idempotency conflict",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          },
+          "413" : {
+            "description" : "Decoded file or archive exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -364,6 +418,59 @@
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/GeneratedDocumentResponse"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        }, {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/api/v1/document-files/{id}/active" : {
+      "patch" : {
+        "tags" : [ "Document Files" ],
+        "summary" : "Restore an exported file version",
+        "description" : "Atomically makes a retained available version current for its document and file type",
+        "operationId" : "activateFileVersion",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "UUID of the retained exported file",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "description" : "Required owner context for approved service identities",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "File version is current",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Exported file version not found or unavailable",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentFileResponse"
                 }
               }
             }
@@ -898,6 +1005,16 @@
           },
           "active" : {
             "type" : "boolean"
+          },
+          "currentSlot" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "operationKey" : {
+            "type" : "string"
+          },
+          "requestSha256" : {
+            "type" : "string"
           },
           "originalFilename" : {
             "type" : "string"

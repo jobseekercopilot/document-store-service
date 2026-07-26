@@ -44,6 +44,16 @@ The repository-specific beta audits remain the detailed finding registers.
 This ADR resolves their cross-repository ownership question; it does not
 supersede their blockers.
 
+### Implementation update: STORE-03
+
+On 2026-07-26, Document Store implemented the repository-local concurrency
+part of this boundary: database-enforced unique versions and single-current
+selection, PostgreSQL transaction-scoped locking, owner-scoped operation keys,
+atomic activation/deactivation, and exported-file restoration. See
+[`../VERSION_CONCURRENCY.md`](../VERSION_CONCURRENCY.md). DOC-06 still owns the
+cross-service immutable application-reference and lifecycle model, while
+DOCGEN-09 owns producer key propagation.
+
 ## Current flow
 
 The document capabilities are disabled in the selected client beta
@@ -302,4 +312,3 @@ complete evidence for those implementations.
   and E2E gates pass.
 - Existing focused issues remain the implementation owners. No new duplicate
   implementation issue is created by this decision.
-

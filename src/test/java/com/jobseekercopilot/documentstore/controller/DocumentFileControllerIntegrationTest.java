@@ -36,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -425,7 +426,80 @@ class DocumentFileControllerIntegrationTest {
                         FileType.DOCX)
                 .stream()
                 .allMatch(file -> file.getFileName()
-                        .equals("document-" + replacementFileId + ".docx")));
+                .equals("document-" + replacementFileId + ".docx")));
+    }
+
+    @Test
+    void createFile_IdempotencyKeyReplaysAndRejectsDifferentBytes() throws Exception {
+        GeneratedDocument document = saveDocument();
+        byte[] firstPdf = TestDocumentFiles.validPdf();
+        CreateDocumentFileRequest request =
+                fileRequest(document.getId(), "cv.pdf", firstPdf);
+
+        String first = mockMvc.perform(post("/api/v1/document-files")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
+                        .header("Idempotency-Key", "export-document-pdf")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String replay = mockMvc.perform(post("/api/v1/document-files")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
+                        .header("Idempotency-Key", "export-document-pdf")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertEquals(
+                objectMapper.readTree(first).path("id").asText(),
+                objectMapper.readTree(replay).path("id").asText());
+
+        byte[] differentPdf =
+                (new String(firstPdf, StandardCharsets.ISO_8859_1) + "\n")
+                        .getBytes(StandardCharsets.ISO_8859_1);
+        request.setFileContentBase64(Base64.getEncoder().encodeToString(differentPdf));
+        mockMvc.perform(post("/api/v1/document-files")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
+                        .header("Idempotency-Key", "export-document-pdf")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message")
+                        .value("Idempotency-Key was already used for a different document file operation."));
+        assertEquals(
+                1,
+                fileRepository
+                        .findByGeneratedDocumentIdOrderByCreatedAtDesc(document.getId())
+                        .size());
+    }
+
+    @Test
+    void activateFileVersion_ShouldRestoreRetainedPreviousVersion() throws Exception {
+        GeneratedDocument document = saveDocument();
+        UUID firstId = createFile(
+                document.getId(), "cv.docx", TestDocumentFiles.validDocx());
+        UUID secondId = createFile(
+                document.getId(), "cv.docx", TestDocumentFiles.validDocx());
+
+        assertFalse(fileRepository.findById(firstId).orElseThrow().isActive());
+        assertTrue(fileRepository.findById(secondId).orElseThrow().isActive());
+        mockMvc.perform(patch("/api/v1/document-files/{id}/active", firstId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(firstId.toString()))
+                .andExpect(jsonPath("$.version").value(1))
+                .andExpect(jsonPath("$.active").value(true));
+
+        assertTrue(fileRepository.findById(firstId).orElseThrow().isActive());
+        assertFalse(fileRepository.findById(secondId).orElseThrow().isActive());
     }
 
     @Test

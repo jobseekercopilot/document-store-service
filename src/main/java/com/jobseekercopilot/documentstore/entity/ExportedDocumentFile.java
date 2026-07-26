@@ -59,6 +59,15 @@ public class ExportedDocumentFile {
     @Builder.Default
     private boolean active = true;
 
+    @Column(name = "current_slot")
+    private Short currentSlot;
+
+    @Column(name = "operation_key", length = 128)
+    private String operationKey;
+
+    @Column(name = "request_sha256", length = 64)
+    private String requestSha256;
+
     @Column(nullable = false)
     @Builder.Default
     private int version = 1;
@@ -104,10 +113,16 @@ public class ExportedDocumentFile {
         if (storedAt == null) {
             storedAt = now;
         }
+        syncCurrentSlot();
     }
 
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
+        syncCurrentSlot();
+    }
+
+    private void syncCurrentSlot() {
+        currentSlot = active ? (short) 1 : null;
     }
 }

@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
 import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
+import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
 import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
 import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.FileType;
@@ -411,6 +412,10 @@ class DocumentSecurityIntegrationTest {
                 .documentType(DocumentType.CV)
                 .title("Java Developer CV")
                 .content("Synthetic content")
+                .lifecycleState(DocumentLifecycleState.APPROVED)
+                .active(true)
+                .approvedAt(java.time.LocalDateTime.now())
+                .approvedBy(owner)
                 .build());
     }
 

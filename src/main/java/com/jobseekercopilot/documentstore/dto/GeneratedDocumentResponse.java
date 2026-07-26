@@ -2,6 +2,7 @@ package com.jobseekercopilot.documentstore.dto;
 
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
+import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -30,6 +31,9 @@ public class GeneratedDocumentResponse {
     @Schema(description = "ID of the application this document version belongs to")
     private String applicationId;
 
+    @Schema(description = "Stable identifier shared by all versions of this document")
+    private UUID documentFamilyId;
+
     @Schema(description = "Type of document", example = "CV", allowableValues = {"CV", "COVER_LETTER"})
     private DocumentType documentType;
 
@@ -39,11 +43,25 @@ public class GeneratedDocumentResponse {
     @Schema(description = "Generated document content", example = "Generated CV content...")
     private String content;
 
-    @Schema(description = "Version number for this application/document type")
+    @Schema(description = "Immutable version number within the document family")
     private Integer version;
 
-    @Schema(description = "Whether this document version is active")
+    @Schema(description = "Deprecated alias for current", deprecated = true)
     private boolean active;
+
+    @Schema(description = "Whether this approved version is selected for future use")
+    private boolean current;
+
+    private DocumentLifecycleState lifecycleState;
+
+    @Schema(description = "SHA-256 of the stored text content")
+    private String contentSha256;
+
+    private GenerationMetadata generationMetadata;
+
+    private LocalDateTime approvedAt;
+
+    private String approvedBy;
 
     @Schema(description = "Original filename for uploaded documents")
     private String originalFilename;

@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -29,6 +30,9 @@ public class CreateDocumentRequest {
     @Schema(description = "ID of the application this document version belongs to", example = "550e8400-e29b-41d4-a716-446655440000")
     private String applicationId;
 
+    @Schema(description = "Stable family ID when creating a replacement or regenerated version")
+    private java.util.UUID documentFamilyId;
+
     @NotNull(message = "documentType is required")
     @Schema(description = "Type of document", example = "CV", allowableValues = {"CV", "COVER_LETTER"}, requiredMode = Schema.RequiredMode.REQUIRED)
     private DocumentType documentType;
@@ -41,11 +45,11 @@ public class CreateDocumentRequest {
     @Schema(description = "Generated document content", example = "Generated CV content...", requiredMode = Schema.RequiredMode.REQUIRED)
     private String content;
 
-    @Schema(description = "Version number for this application/document type", example = "2")
+    @Schema(description = "Expected next version in the document family", example = "2")
     @Positive(message = "version must be positive")
     private Integer version;
 
-    @Schema(description = "Whether this version is active", example = "false")
+    @Schema(description = "Deprecated compatibility field; drafts cannot be current at creation", deprecated = true)
     private Boolean active;
 
     @Schema(description = "Original filename for uploaded documents", example = "replacement-cv.docx")
@@ -53,6 +57,10 @@ public class CreateDocumentRequest {
 
     @Schema(description = "Document source", example = "UPLOADED", allowableValues = {"GENERATED", "UPLOADED"})
     private DocumentSourceType sourceType;
+
+    @Valid
+    @Schema(description = "Required before a generated draft can be approved; omitted for uploads")
+    private GenerationMetadata generationMetadata;
 
     @Schema(description = "User or service that created this document", example = "user-123")
     private String createdBy;

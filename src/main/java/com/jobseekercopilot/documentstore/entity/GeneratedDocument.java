@@ -4,6 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -35,6 +36,9 @@ public class GeneratedDocument {
 
     private String applicationId;
 
+    @Column(nullable = false)
+    private UUID documentFamilyId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private DocumentType documentType;
@@ -51,7 +55,22 @@ public class GeneratedDocument {
 
     @Column(nullable = false)
     @Builder.Default
-    private boolean active = true;
+    private boolean active = false;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private DocumentLifecycleState lifecycleState = DocumentLifecycleState.DRAFT;
+
+    @Column(length = 64)
+    private String contentSha256;
+
+    @Embedded
+    private GenerationProvenance generationProvenance;
+
+    private LocalDateTime approvedAt;
+
+    private String approvedBy;
 
     @Column(name = "current_slot")
     private Short currentSlot;
@@ -83,6 +102,9 @@ public class GeneratedDocument {
         if (id == null) {
             id = UUID.randomUUID();
         }
+        if (documentFamilyId == null) {
+            documentFamilyId = id;
+        }
         if (createdAt == null) {
             createdAt = now;
         }
@@ -94,6 +116,12 @@ public class GeneratedDocument {
         }
         if (sourceType == null) {
             sourceType = DocumentSourceType.GENERATED;
+        }
+        if (lifecycleState == null) {
+            lifecycleState = DocumentLifecycleState.DRAFT;
+        }
+        if (lifecycleState == DocumentLifecycleState.DRAFT) {
+            active = false;
         }
         syncCurrentSlot();
     }

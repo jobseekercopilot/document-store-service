@@ -5,10 +5,13 @@ import com.jobseekercopilot.documentstore.dto.DocumentFileDownload;
 import com.jobseekercopilot.documentstore.dto.DocumentFileResponse;
 import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.FileType;
+import com.jobseekercopilot.documentstore.exception.ErrorResponse;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.service.DocumentFileService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -48,6 +51,10 @@ public class DocumentFileController {
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Exported file saved successfully"),
             @ApiResponse(responseCode = "400", description = "Validation error - missing or invalid fields"),
+            @ApiResponse(
+                    responseCode = "413",
+                    description = "Decoded file or archive exceeds a configured safety limit",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description = "Generated document not found")
     })
     public ResponseEntity<DocumentFileResponse> createDocumentFile(
@@ -63,17 +70,24 @@ public class DocumentFileController {
 
     @PostMapping(value = "/api/v1/documents/{generatedDocumentId}/files/upload",
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Operation(summary = "Upload replacement file", description = "Stores a user-uploaded DOCX or PDF replacement for a generated document")
+    @Operation(summary = "Upload replacement DOCX", description = "Validates and stores a user-uploaded DOCX replacement for a generated document")
     @SecurityRequirement(name = "bearerAuth")
     @SecurityRequirement(name = "serviceToken")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "201", description = "Replacement file saved successfully"),
             @ApiResponse(responseCode = "400", description = "Validation error - missing or invalid upload"),
+            @ApiResponse(
+                    responseCode = "413",
+                    description = "Upload exceeds a configured safety limit",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description = "Generated document not found")
     })
     public ResponseEntity<DocumentFileResponse> uploadReplacementFile(
             @Parameter(description = "UUID of the generated document") @PathVariable UUID generatedDocumentId,
             @RequestParam("file") MultipartFile file,
+            @Parameter(
+                    description = "Private beta replacement uploads support DOCX only",
+                    schema = @Schema(allowableValues = {"DOCX"}))
             @RequestParam("fileType") FileType fileType,
             @RequestParam(value = "source", defaultValue = "USER_UPLOADED") FileSource source,
             @Parameter(description = "Required owner context for approved service identities")
@@ -114,7 +128,11 @@ public class DocumentFileController {
     @SecurityRequirement(name = "serviceToken")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Exported file bytes"),
-            @ApiResponse(responseCode = "404", description = "Exported file not found")
+            @ApiResponse(responseCode = "404", description = "Exported file not found"),
+            @ApiResponse(
+                    responseCode = "503",
+                    description = "Stored file failed integrity or safety validation",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     public ResponseEntity<byte[]> downloadDocumentFile(
             @Parameter(description = "UUID of the exported file") @PathVariable UUID id,
@@ -130,6 +148,10 @@ public class DocumentFileController {
                         .filename(file.fileName())
                         .build()
                         .toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .header(HttpHeaders.CACHE_CONTROL, "private, no-store, max-age=0")
+                .header(HttpHeaders.PRAGMA, "no-cache")
+                .contentLength(file.content().length)
                 .body(file.content());
     }
 

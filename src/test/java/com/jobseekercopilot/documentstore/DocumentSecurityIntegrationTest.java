@@ -29,7 +29,6 @@ import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
 import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
-import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -194,7 +193,7 @@ class DocumentSecurityIntegrationTest {
                 "file",
                 "replacement.pdf",
                 MediaType.APPLICATION_PDF_VALUE,
-                "%PDF-test".getBytes(StandardCharsets.UTF_8));
+                TestDocumentFiles.validPdf());
         mockMvc.perform(multipart(
                                 "/api/v1/documents/{generatedDocumentId}/files/upload",
                                 aliceDocument.getId())
@@ -330,7 +329,7 @@ class DocumentSecurityIntegrationTest {
     void environmentDataSeedAndResetUseTheObjectStorageLifecycle() throws Exception {
         GeneratedDocument document = saveDocument("alice", "application-a");
         UUID fileId = UUID.randomUUID();
-        byte[] content = "%PDF-e2e-seed".getBytes(StandardCharsets.UTF_8);
+        byte[] content = TestDocumentFiles.validPdf();
         Map<String, Object> request = Map.of(
                 "scenarioId", "object-storage-scenario",
                 "userId", "alice",
@@ -412,7 +411,7 @@ class DocumentSecurityIntegrationTest {
     }
 
     private ExportedDocumentFile saveFile(GeneratedDocument document) {
-        byte[] content = "%PDF-test".getBytes(StandardCharsets.UTF_8);
+        byte[] content = TestDocumentFiles.validPdf();
         UUID fileId = UUID.randomUUID();
         String key = ObjectKeyFactory.forFile(document.getId(), fileId, 1);
         String sha256 = ObjectIntegrity.sha256(content);
@@ -451,7 +450,7 @@ class DocumentSecurityIntegrationTest {
                 .fileName("cv.pdf")
                 .mimeType(MediaType.APPLICATION_PDF_VALUE)
                 .fileContentBase64(Base64.getEncoder().encodeToString(
-                        "%PDF-test".getBytes(StandardCharsets.UTF_8)))
+                        TestDocumentFiles.validPdf()))
                 .build();
     }
 

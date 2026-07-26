@@ -2,6 +2,7 @@ package com.jobseekercopilot.documentstore.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jobseekercopilot.documentstore.TestDocumentFiles;
 import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.FileType;
@@ -24,14 +25,12 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.charset.StandardCharsets;
-import java.io.ByteArrayOutputStream;
 import java.util.Base64;
 import java.util.UUID;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -42,7 +41,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = "document-store.validation.maximum-file-bytes=2048")
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_EACH_TEST_METHOD)
 class DocumentFileControllerIntegrationTest {
@@ -74,7 +73,7 @@ class DocumentFileControllerIntegrationTest {
     @Test
     void createDocumentFile_ShouldSaveBytesAndReturnMetadataOnly() throws Exception {
         GeneratedDocument document = saveDocument();
-        byte[] content = "docx-bytes".getBytes(StandardCharsets.UTF_8);
+        byte[] content = TestDocumentFiles.validDocx();
 
         String response = mockMvc.perform(post("/api/v1/document-files")
                         .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
@@ -84,7 +83,6 @@ class DocumentFileControllerIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.generatedDocumentId").value(document.getId().toString()))
                 .andExpect(jsonPath("$.fileType").value("DOCX"))
-                .andExpect(jsonPath("$.fileName").value("cv.docx"))
                 .andExpect(jsonPath("$.mimeType").value(DOCX_MIME_TYPE))
                 .andExpect(jsonPath("$.createdAt").isNotEmpty())
                 .andReturn()
@@ -95,6 +93,10 @@ class DocumentFileControllerIntegrationTest {
         assertFalse(json.has("fileContentBase64"));
         var stored = fileRepository.findById(UUID.fromString(json.get("id").asText()))
                 .orElseThrow();
+        assertEquals(
+                "document-" + stored.getId() + ".docx",
+                json.get("fileName").asText());
+        assertEquals(json.get("fileName").asText(), stored.getFileName());
         assertTrue(objectStorage.exists(stored.getStorageKey()));
         assertArrayEquals(content, objectStorage.get(stored.getStorageKey()));
         assertTrue(json.get("contentSize").asLong() == content.length);
@@ -107,14 +109,18 @@ class DocumentFileControllerIntegrationTest {
 
     @Test
     void getDocumentFileMetadata_WhenExists_ShouldReturnMetadataOnly() throws Exception {
-        UUID fileId = createFile(saveDocument().getId(), "cv.docx", "docx-bytes".getBytes(StandardCharsets.UTF_8));
+        UUID fileId = createFile(
+                saveDocument().getId(),
+                "cv.docx",
+                TestDocumentFiles.validDocx());
 
         String response = mockMvc.perform(get("/api/v1/document-files/{id}", fileId)
                         .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
                         .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(fileId.toString()))
-                .andExpect(jsonPath("$.fileName").value("cv.docx"))
+                .andExpect(jsonPath("$.fileName")
+                        .value("document-" + fileId + ".docx"))
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
@@ -124,7 +130,7 @@ class DocumentFileControllerIntegrationTest {
 
     @Test
     void downloadDocumentFile_ShouldReturnSavedBytesAndDownloadHeaders() throws Exception {
-        byte[] content = "pdf-bytes".getBytes(StandardCharsets.UTF_8);
+        byte[] content = TestDocumentFiles.validPdf();
         UUID fileId = createFile(saveDocument().getId(), "cv.pdf", content);
 
         byte[] actual = mockMvc.perform(get("/api/v1/document-files/{id}/download", fileId)
@@ -132,7 +138,17 @@ class DocumentFileControllerIntegrationTest {
                         .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.CONTENT_TYPE, PDF_MIME_TYPE))
-                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"cv.pdf\""))
+                .andExpect(header().string(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"document-" + fileId + ".pdf\""))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string(
+                        HttpHeaders.CACHE_CONTROL,
+                        "private, no-store, max-age=0"))
+                .andExpect(header().string(HttpHeaders.PRAGMA, "no-cache"))
+                .andExpect(header().longValue(
+                        HttpHeaders.CONTENT_LENGTH,
+                        content.length))
                 .andReturn()
                 .getResponse()
                 .getContentAsByteArray();
@@ -146,7 +162,7 @@ class DocumentFileControllerIntegrationTest {
         UUID fileId = createFile(
                 saveDocument().getId(),
                 "cv.pdf",
-                "expected-pdf".getBytes(StandardCharsets.UTF_8));
+                TestDocumentFiles.validPdf());
         var metadata = fileRepository.findById(fileId).orElseThrow();
         objectStorage.delete(metadata.getStorageKey());
         byte[] corrupt = "corrupt-pdf".getBytes(StandardCharsets.UTF_8);
@@ -168,12 +184,173 @@ class DocumentFileControllerIntegrationTest {
     }
 
     @Test
+    void generatedFileValidationRejectsUnsafeMetadataAndContentBeforePersistence()
+            throws Exception {
+        GeneratedDocument document = saveDocument();
+        CreateDocumentFileRequest unsafeName =
+                fileRequest(document.getId(), "../cv.pdf", TestDocumentFiles.validPdf());
+        CreateDocumentFileRequest spoofedMime =
+                fileRequest(document.getId(), "cv.pdf", TestDocumentFiles.validPdf());
+        spoofedMime.setMimeType(MediaType.IMAGE_PNG_VALUE);
+        CreateDocumentFileRequest spoofedContent =
+                fileRequest(
+                        document.getId(),
+                        "cv.pdf",
+                        "not-a-pdf".getBytes(StandardCharsets.UTF_8));
+
+        for (CreateDocumentFileRequest request :
+                new CreateDocumentFileRequest[] {
+                    unsafeName,
+                    spoofedMime,
+                    spoofedContent
+                }) {
+            mockMvc.perform(post("/api/v1/document-files")
+                            .header(
+                                    DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                    PRODUCER_TOKEN)
+                            .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isBadRequest());
+        }
+
+        String unsupportedType = objectMapper.writeValueAsString(
+                        fileRequest(document.getId(), "cv.pdf", TestDocumentFiles.validPdf()))
+                .replace("\"PDF\"", "\"TXT\"");
+        mockMvc.perform(post("/api/v1/document-files")
+                        .header(
+                                DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(unsupportedType))
+                .andExpect(status().isBadRequest());
+
+        assertEquals(0, fileRepository.count());
+    }
+
+    @Test
+    void oversizedGeneratedFileReturns413BeforePersistence() throws Exception {
+        GeneratedDocument document = saveDocument();
+        byte[] content = new byte[2049];
+
+        mockMvc.perform(post("/api/v1/document-files")
+                        .header(
+                                DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                fileRequest(document.getId(), "cv.pdf", content))))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.message")
+                        .value("File exceeds the private beta size limit"));
+
+        assertEquals(0, fileRepository.count());
+    }
+
+    @Test
+    void userReplacementPdfIsRejectedWithoutChangingTheCurrentDocx()
+            throws Exception {
+        GeneratedDocument document = saveDocument();
+        UUID currentFileId = createFile(
+                document.getId(),
+                "cv.docx",
+                TestDocumentFiles.validDocx());
+        MockMultipartFile replacement = new MockMultipartFile(
+                "file",
+                "replacement.pdf",
+                MediaType.APPLICATION_PDF_VALUE,
+                TestDocumentFiles.validPdf());
+
+        mockMvc.perform(multipart(
+                                "/api/v1/documents/{generatedDocumentId}/files/upload",
+                                document.getId())
+                        .file(replacement)
+                        .header(
+                                DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
+                        .param("fileType", "PDF")
+                        .param("source", "USER_UPLOADED"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message")
+                        .value("Private beta replacement uploads support DOCX only"));
+
+        assertEquals(1, fileRepository.count());
+        assertTrue(fileRepository.findById(currentFileId).orElseThrow().isActive());
+    }
+
+    @Test
+    void oversizedMultipartFileReturns413BeforePersistence() throws Exception {
+        GeneratedDocument document = saveDocument();
+        MockMultipartFile oversized = new MockMultipartFile(
+                "file",
+                "replacement.docx",
+                DOCX_MIME_TYPE,
+                new byte[2049]);
+
+        mockMvc.perform(multipart(
+                                "/api/v1/documents/{generatedDocumentId}/files/upload",
+                                document.getId())
+                        .file(oversized)
+                        .header(
+                                DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
+                        .param("fileType", "DOCX")
+                        .param("source", "USER_UPLOADED"))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.message")
+                        .value("File exceeds the private beta size limit"));
+
+        assertEquals(0, fileRepository.count());
+    }
+
+    @Test
+    void storedFileThatPassesChecksumButFailsSafetyValidationIsQuarantined()
+            throws Exception {
+        UUID fileId = createFile(
+                saveDocument().getId(),
+                "cv.pdf",
+                TestDocumentFiles.validPdf());
+        var metadata = fileRepository.findById(fileId).orElseThrow();
+        byte[] activeContent =
+                "%PDF-1.7\n/JavaScript\n%%EOF\n".getBytes(StandardCharsets.ISO_8859_1);
+        objectStorage.delete(metadata.getStorageKey());
+        objectStorage.put(
+                metadata.getStorageKey(),
+                activeContent,
+                PDF_MIME_TYPE,
+                com.jobseekercopilot.documentstore.storage.ObjectIntegrity.sha256(
+                        activeContent));
+        metadata.setContentSize(activeContent.length);
+        metadata.setContentSha256(
+                com.jobseekercopilot.documentstore.storage.ObjectIntegrity.sha256(
+                        activeContent));
+        fileRepository.saveAndFlush(metadata);
+
+        mockMvc.perform(get("/api/v1/document-files/{id}/download", fileId)
+                        .header(
+                                DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message")
+                        .value("Document file storage is temporarily unavailable."));
+
+        assertEquals(
+                ObjectStorageStatus.UNAVAILABLE,
+                fileRepository.findById(fileId).orElseThrow().getStorageStatus());
+    }
+
+    @Test
     void deleteDocument_ShouldDeleteObjectAndMetadata() throws Exception {
         GeneratedDocument document = saveDocument();
         UUID fileId = createFile(
                 document.getId(),
                 "cv.pdf",
-                "delete-me".getBytes(StandardCharsets.UTF_8));
+                TestDocumentFiles.validPdf());
         String key = fileRepository.findById(fileId).orElseThrow().getStorageKey();
 
         mockMvc.perform(delete("/api/v1/documents/{id}", document.getId())
@@ -189,8 +366,8 @@ class DocumentFileControllerIntegrationTest {
     @Test
     void getFilesForDocument_ShouldReturnLinkedFileMetadata() throws Exception {
         GeneratedDocument document = saveDocument();
-        createFile(document.getId(), "cv.docx", "docx-bytes".getBytes(StandardCharsets.UTF_8));
-        createFile(document.getId(), "cv.pdf", "pdf-bytes".getBytes(StandardCharsets.UTF_8));
+        createFile(document.getId(), "cv.docx", TestDocumentFiles.validDocx());
+        createFile(document.getId(), "cv.pdf", TestDocumentFiles.validPdf());
 
         mockMvc.perform(get("/api/v1/documents/{generatedDocumentId}/files", document.getId())
                         .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
@@ -203,14 +380,19 @@ class DocumentFileControllerIntegrationTest {
     @Test
     void uploadReplacementFile_ShouldDeactivatePreviousFileAndReturnLatestActiveFile() throws Exception {
         GeneratedDocument document = saveDocument();
-        UUID previousFileId = createFile(document.getId(), "cv.docx", "generated-docx".getBytes(StandardCharsets.UTF_8));
+        UUID previousFileId = createFile(
+                document.getId(),
+                "cv.docx",
+                TestDocumentFiles.validDocx());
         MockMultipartFile replacement = new MockMultipartFile(
                 "file",
                 "cv-edited.docx",
                 MediaType.APPLICATION_OCTET_STREAM_VALUE,
-                minimalDocx());
+                TestDocumentFiles.validDocx());
 
-        mockMvc.perform(multipart("/api/v1/documents/{generatedDocumentId}/files/upload", document.getId())
+        String uploadResponse = mockMvc.perform(multipart(
+                                "/api/v1/documents/{generatedDocumentId}/files/upload",
+                                document.getId())
                         .file(replacement)
                         .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
                         .header(DocumentOwnerResolver.OWNER_HEADER, "user-123")
@@ -220,7 +402,12 @@ class DocumentFileControllerIntegrationTest {
                 .andExpect(jsonPath("$.generatedDocumentId").value(document.getId().toString()))
                 .andExpect(jsonPath("$.fileType").value("DOCX"))
                 .andExpect(jsonPath("$.source").value("USER_UPLOADED"))
-                .andExpect(jsonPath("$.active").value(true));
+                .andExpect(jsonPath("$.active").value(true))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        UUID replacementFileId = UUID.fromString(
+                objectMapper.readTree(uploadResponse).path("id").asText());
 
         assertFalse(fileRepository.findById(previousFileId).orElseThrow().isActive());
         mockMvc.perform(get("/api/v1/documents/{generatedDocumentId}/files/latest", document.getId())
@@ -228,7 +415,8 @@ class DocumentFileControllerIntegrationTest {
                         .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0].fileName").value("cv-edited.docx"))
+                .andExpect(jsonPath("$[0].fileName")
+                        .value("document-" + replacementFileId + ".docx"))
                 .andExpect(jsonPath("$[0].active").value(true));
         assertTrue(fileRepository
                 .findByGeneratedDocumentIdAndGeneratedDocument_UserIdAndFileTypeAndActiveTrue(
@@ -236,31 +424,8 @@ class DocumentFileControllerIntegrationTest {
                         "user-123",
                         FileType.DOCX)
                 .stream()
-                .allMatch(file -> file.getFileName().equals("cv-edited.docx")));
-    }
-
-    private byte[] minimalDocx() throws Exception {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        try (ZipOutputStream zip = new ZipOutputStream(output)) {
-            zip.putNextEntry(new ZipEntry("[Content_Types].xml"));
-            zip.write("""
-                    <?xml version="1.0" encoding="UTF-8"?>
-                    <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-                      <Default Extension="xml" ContentType="application/xml"/>
-                      <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-                    </Types>
-                    """.getBytes(StandardCharsets.UTF_8));
-            zip.closeEntry();
-            zip.putNextEntry(new ZipEntry("word/document.xml"));
-            zip.write("""
-                    <?xml version="1.0" encoding="UTF-8"?>
-                    <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                      <w:body><w:p><w:r><w:t>Edited CV</w:t></w:r></w:p></w:body>
-                    </w:document>
-                    """.getBytes(StandardCharsets.UTF_8));
-            zip.closeEntry();
-        }
-        return output.toByteArray();
+                .allMatch(file -> file.getFileName()
+                        .equals("document-" + replacementFileId + ".docx")));
     }
 
     @Test
@@ -272,7 +437,7 @@ class DocumentFileControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(fileRequest(
                                 UUID.randomUUID(),
                                 "missing.docx",
-                                "content".getBytes(StandardCharsets.UTF_8)))))
+                                TestDocumentFiles.validDocx()))))
                 .andExpect(status().isNotFound());
     }
 

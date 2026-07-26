@@ -8,6 +8,8 @@ STORE-02 repository storage update: 2026-07-26
 
 DOC-03 object-storage separation update: 2026-07-26
 
+DOC-05 file-validation update: 2026-07-26
+
 Status: **Not ready for private beta**
 
 ## STORE-01 producer boundary
@@ -69,6 +71,34 @@ This closes the repository implementation portion of DOC-03. INFRA-08 still
 owns deployed private-bucket, credentials, KMS, backup/versioning and recovery
 evidence. DOC-08 still owns scheduled orphan/missing-object reconciliation.
 
+## DOC-05 file-validation boundary
+
+The private-beta allow-list is now explicit: approved producers may store
+validated generated DOCX/PDF, while browser replacement uploads are DOCX-only.
+Decoded and multipart byte limits are aligned; DOCX entry count, individual and
+total expansion and compression ratio are bounded. Inspection rejects
+traversal, duplicates, corrupt XML/archives, macros, password-protected
+packages, embedded/ActiveX content, external relationships and imported
+content. Generated PDFs require a supported signature/trailer and reject
+obvious encryption and active-content tokens.
+
+Caller names and MIME values are treated as untrusted. Only canonical MIME
+values and `document-<file UUID>.<extension>` names are stored and returned.
+Downloads include attachment, `nosniff`, private/no-store caching and length
+headers. Validation completes before persistence or active-version changes;
+stored objects that later fail checksum or content revalidation are marked
+`UNAVAILABLE`.
+
+The supported matrix, limits, rejection outcomes and explicit no-paid-scanner
+decision are published in [`FILE_VALIDATION.md`](FILE_VALIDATION.md). This is
+bounded static inspection, not complete malware detection. EXPORT-02 retains
+renderer budgets, fonts/licences and generated-document quality.
+
+Repository verification passed `mvn -B --no-transfer-progress -Ddebug=false
+clean verify`: 61 tests, zero failures, zero errors and zero skipped. The
+source-only Dockerfile also built successfully. This is repository evidence,
+not a production deployment or image-vulnerability scan.
+
 ## Verified responsibility
 
 The service stores generated CV/cover-letter text in `GeneratedDocument`, file
@@ -113,25 +143,19 @@ deactivated, while exported file replacements mark older files inactive.
    constraint; concurrent writes can allocate duplicate versions.
 6. Activation/deactivation updates are not protected as one transactional,
    constrained operation, so multiple active versions can exist.
-7. Base64 document-file requests and stored document fields lack bounded
-   content/field limits. Multipart limits alone do not protect internal calls.
-8. DOCX inspection only looks for two ZIP entries and does not bound entry
-    count, compression ratio, total expanded bytes, macros, external
-    relationships, or active content. PDF signatures are not validated.
-9. File metadata still trusts caller filenames and MIME types. File ownership
-    is now joined to the owning document for public UUID lookups.
-10. Deactivation scans all documents in memory for an application.
-11. Application request/service logs now redact stable owner and resource
+7. Deactivation scans all documents in memory for an application.
+8. Application request/service logs now redact stable owner and resource
     identifiers, but audit-event coverage and log-retention policy remain
     incomplete.
-12. Tests now cover authentication, service least privilege, owner and
+9. Tests now cover authentication, service least privilege, owner and
     cross-user denial, happy-path CRUD/replacement, production configuration,
     PostgreSQL migration/application-restart persistence, backup/restore
     integrity, legacy object migration, checksum quarantine, E2E seed/reset and
-    synthetic object deletion. They do not yet cover concurrent versioning,
-    governed retention/legal hold, deployed encryption, malicious uploads,
-    large payloads or integrated consumers.
-13. Current Spring, Tomcat, Jackson, logging, and Swagger UI dependency
+    synthetic object deletion, plus malicious/corrupt content, spoofed
+    metadata, archive limits and safe downloads. They do not yet cover
+    concurrent versioning, governed retention/legal hold, deployed encryption
+    or integrated consumers.
+10. Current Spring, Tomcat, Jackson, logging, and Swagger UI dependency
     findings include untriaged Critical/High advisories; the container has not
     been scanned.
 

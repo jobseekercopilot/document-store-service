@@ -11,6 +11,7 @@ import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.exception.OperationConflictException;
+import com.jobseekercopilot.documentstore.repository.DocumentStorageOperationRepository;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import com.jobseekercopilot.documentstore.service.DocumentFileService;
@@ -82,6 +83,9 @@ class PostgresDocumentVersioningIntegrationTest {
     private ExportedDocumentFileRepository fileRepository;
 
     @Autowired
+    private DocumentStorageOperationRepository storageOperationRepository;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @MockBean
@@ -90,6 +94,7 @@ class PostgresDocumentVersioningIntegrationTest {
     @BeforeEach
     void cleanDatabase() {
         fileRepository.deleteAllInBatch();
+        storageOperationRepository.deleteAllInBatch();
         documentRepository.deleteAllInBatch();
     }
 

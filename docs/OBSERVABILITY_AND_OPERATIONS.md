@@ -24,7 +24,7 @@ underscores and add counter suffixes.
 | `document.store.operation.count` | Counter | `resource`, `operation`, `outcome`, `reason`, `document_type`, `file_type` | Successful and failed create, storage, retrieval, list, delete, activation, deactivation, export-storage and export-retrieval operations |
 | `document.store.operation.duration` | Timer | Same as operation count | End-to-end repository service-operation latency |
 | `document.store.payload.size` | Distribution summary, bytes | `resource`, `direction`, `document_type`, `file_type` | UTF-8 generated-text bytes and binary export bytes stored or retrieved |
-| `document.store.reconciliation.count` | Counter | `resource`, `outcome`, `reason` | Bounded consistency anomalies detected or repaired; the current service records repairs of multiple active versions |
+| `document.store.reconciliation.count` | Counter | `resource`, `outcome`, `reason` | Bounded reconciliation passes, inspected items, detected anomalies and repairs, including multiple-current repair and the durable storage journal |
 | `document.store.access.denied.count` | Counter | `route`, `reason` | Authentication and authorization denials by redacted route family |
 
 Allowed resource labels are `document` and `file`. Operation labels are a
@@ -165,12 +165,12 @@ environment name and timestamps.
 
 ### 3. Reconciliation safeguards
 
-The current merged repository records when an activation/replacement repairs
-multiple active versions. DOC-08's feature branch owns durable operation
-journals, orphan/stuck-state detection, scheduled/manual reconciliation and
-safe compensating actions.
+The current merged repository records multiple-current repair and provides
+the durable operation journal, orphan/stuck-state detection, scheduled
+reconciliation and safe compensating actions described in
+[`STORAGE_RECONCILIATION.md`](STORAGE_RECONCILIATION.md).
 
-Until DOC-08 is integrated:
+For every reconciliation incident:
 
 - treat any repeated repair as evidence of a consistency incident;
 - do not infer ownership or delete an orphan from a filename, timestamp or
@@ -242,7 +242,6 @@ Local Maven verification exercises:
 - this document's required catalogue, thresholds, synthetic, recovery and
   privacy sections.
 
-These tests prove repository behavior only. DOC-08, DOCGEN-19 and
-Infrastructure must retain integrated reconciliation, deployed dependency,
-dashboard, alert, recovery and cross-service drill evidence before DOC-10 can
-be considered fully enabled.
+These tests prove repository behavior only. DOCGEN-19 and Infrastructure must
+retain deployed dependency, dashboard, alert, recovery and cross-service drill
+evidence before DOC-10 can be considered fully enabled.

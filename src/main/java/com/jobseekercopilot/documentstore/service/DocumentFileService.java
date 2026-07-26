@@ -14,7 +14,6 @@ import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileReposit
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
-import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
 import com.jobseekercopilot.documentstore.storage.ObjectStorageException;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -39,6 +38,7 @@ public class DocumentFileService {
     private final DocumentFileValidator fileValidator;
     private final DocumentOperationLock operationLock;
     private final DocumentStoreMetrics metrics;
+    private final DocumentStorageOperationJournal storageOperationJournal;
 
     @Transactional
     public DocumentFileResponse createDocumentFile(
@@ -312,21 +312,32 @@ public class DocumentFileService {
 
         operationLock.acquire(lockScope(
                 "document-file-version", generatedDocumentId, fileType));
-        int version = fileRepository
+        int metadataVersion = fileRepository
                 .findFirstByGeneratedDocumentIdAndFileTypeOrderByVersionDesc(
                         generatedDocumentId, fileType)
                 .map(ExportedDocumentFile::getVersion)
-                .map(current -> current + 1)
-                .orElse(1);
-        UUID fileId = UUID.randomUUID();
+                .orElse(0);
+        int reservedVersion =
+                storageOperationJournal.highestReservedVersion(generatedDocumentId, fileType);
+        int proposedVersion = Math.max(metadataVersion, reservedVersion) + 1;
+        StorageOperationReservation reservation = storageOperationJournal.prepare(
+                ownerId,
+                generatedDocumentId,
+                fileType,
+                proposedVersion,
+                operationKey,
+                requestSha256);
+        int version = reservation.fileVersion();
+        UUID fileId = reservation.fileId();
         String fileName = fileValidator.safeFileName(fileId, fileType);
         String mimeType = fileValidator.canonicalMimeType(fileType);
-        String storageKey = ObjectKeyFactory.forFile(generatedDocumentId, fileId, version);
+        String storageKey = reservation.storageKey();
         String sha256 = ObjectIntegrity.sha256(content);
         objectStorage.put(storageKey, content, mimeType, sha256);
         try {
             deactivateCurrentFile(ownerId, generatedDocumentId, fileType);
-            return fileRepository.saveAndFlush(ExportedDocumentFile.builder()
+            ExportedDocumentFile saved = fileRepository.saveAndFlush(
+                    ExportedDocumentFile.builder()
                     .id(fileId)
                     .generatedDocumentId(generatedDocumentId)
                     .ownerId(ownerId)
@@ -343,6 +354,8 @@ public class DocumentFileService {
                     .contentSha256(sha256)
                     .storageStatus(ObjectStorageStatus.AVAILABLE)
                     .build());
+            storageOperationJournal.markCommitted(fileId);
+            return saved;
         } catch (RuntimeException exception) {
             try {
                 objectStorage.delete(storageKey);

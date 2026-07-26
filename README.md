@@ -12,8 +12,8 @@ locking, database uniqueness, retry keys and explicit restoration. Production
 file writes additionally require a
 private S3-compatible bucket and managed SSE-KMS key. Approved consumers and
 Infrastructure have not completed identity, secret/key, bucket and deployment
-rollout, and production retention, cross-store reconciliation and integrated
-consumer idempotency rollout remain open. See
+rollout, and production retention, integrated consumer idempotency and
+deployed reconciliation alerting remain open. See
 [`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md).
 
 The bounded generated-document cleanup dependency from Job Finder, and the
@@ -58,6 +58,9 @@ groups, alert thresholds, cost-free synthetic path and privacy-safe incident/
 recovery runbook are defined in
 [`docs/OBSERVABILITY_AND_OPERATIONS.md`](docs/OBSERVABILITY_AND_OPERATIONS.md).
 The repository does not provision paid monitoring infrastructure.
+The durable storage-operation journal, bounded reconciler, privacy-safe
+metrics and guarded orphan-recovery procedure are defined in
+[`docs/STORAGE_RECONCILIATION.md`](docs/STORAGE_RECONCILIATION.md).
 
 ## Build
 
@@ -79,8 +82,8 @@ controls. It also covers bounded operation metrics, log/metric redaction,
 correlation propagation, database/object-storage readiness and reconciliation
 signals.
 Passing it does not resolve consumer rollout, deployed platform
-evidence, deployed monitoring, scheduled cross-store reconciliation or
-governed retention blockers.
+evidence, deployed monitoring/reconciliation alerting or governed retention
+blockers.
 
 To intentionally refresh the contract after reviewing an API change:
 

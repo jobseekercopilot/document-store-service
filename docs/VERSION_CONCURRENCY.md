@@ -42,6 +42,10 @@ database transaction.
 - H2 uses a process-local transaction lock only for isolated tests. H2 is not
   an approved runtime database.
 - Version allocation happens after the aggregate lock is held.
+- Exported-file allocation includes durable `PREPARED`, `COMMITTED` and
+  `ROLLED_BACK` storage reservations. An interrupted write may therefore leave
+  an intentional version gap; reserved version numbers are never silently
+  reused for different bytes.
 - The prior current row is flushed inactive before the new or restored row is
   flushed current. Both changes still belong to one transaction, so a later
   failure restores the prior database state.
@@ -103,13 +107,16 @@ references.
 - Validation completes before locks mutate current state.
 - A database failure rolls back version allocation and current selection.
 - A database failure observed while storing file metadata triggers immediate
-  best-effort deletion of the newly written object.
+  best-effort deletion of the newly written object. The durable `PREPARED`
+  reservation remains available to reconciliation if that deletion or the
+  enclosing transaction boundary is interrupted.
 - An object write failure occurs before current metadata changes.
 - A same-key/same-request retry returns the original result.
 - A same-key/different-request or stale explicit version returns a stable
   conflict and must not be retried with that key.
 
-Cross-store database/object failures after an unexpected commit boundary,
-orphan discovery and scheduled repair remain the explicit scope of DOC-08.
-This service logs a compensation failure but does not make a destructive
-reconciliation guess.
+Cross-store database/object failures, orphan discovery and scheduled repair are
+defined in
+[`STORAGE_RECONCILIATION.md`](STORAGE_RECONCILIATION.md). Unknown orphan
+objects are reported for guarded operator review and are never deleted by
+guessing.

@@ -55,7 +55,17 @@ public class DocumentStoreMetrics {
             "dependency",
             "conflict",
             "unexpected",
-            "multiple_active");
+            "multiple_active",
+            "reconciliation_run",
+            "delete_pending",
+            "prepared_committed",
+            "prepared_rolled_back",
+            "prepared_failed",
+            "metadata_inspected",
+            "metadata_quarantined",
+            "metadata_inspection_failed",
+            "unknown_orphan",
+            "inventory_failed");
     private static final Set<String> DIRECTIONS = Set.of("stored", "retrieved");
     private static final Set<String> ACCESS_REASONS =
             Set.of("authentication_required", "access_denied");
@@ -140,6 +150,17 @@ public class DocumentStoreMetrics {
 
     public void recordReconciliation(
             String resource, String outcome, String reason) {
+        recordReconciliation(resource, outcome, reason, 1);
+    }
+
+    public void recordReconciliation(
+            String resource,
+            String outcome,
+            String reason,
+            long count) {
+        if (count <= 0) {
+            return;
+        }
         Counter.builder(RECONCILIATION_COUNT)
                 .description("Document consistency anomalies reconciled by a bounded operation")
                 .tags(
@@ -147,7 +168,7 @@ public class DocumentStoreMetrics {
                         "outcome", bounded(outcome, OUTCOMES),
                         "reason", bounded(reason, REASONS))
                 .register(registry)
-                .increment();
+                .increment(count);
     }
 
     public void recordAccessDenied(String route, String reason) {

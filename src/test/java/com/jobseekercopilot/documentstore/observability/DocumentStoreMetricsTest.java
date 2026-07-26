@@ -142,6 +142,24 @@ class DocumentStoreMetricsTest {
     }
 
     @Test
+    void reconciliationItemCountsUseTheSharedBoundedMetric() {
+        metrics.recordReconciliation(
+                "file",
+                "repaired",
+                "metadata_quarantined",
+                3);
+
+        assertThat(registry.get(DocumentStoreMetrics.RECONCILIATION_COUNT)
+                        .tags(
+                                "resource", "file",
+                                "outcome", "repaired",
+                                "reason", "metadata_quarantined")
+                        .counter()
+                        .count())
+                .isEqualTo(3);
+    }
+
+    @Test
     void arbitraryDimensionsCollapseAndNeverReachMetricsOrLogs(
             CapturedOutput output) {
         String rawOwner = "raw-owner-alice@example.test";

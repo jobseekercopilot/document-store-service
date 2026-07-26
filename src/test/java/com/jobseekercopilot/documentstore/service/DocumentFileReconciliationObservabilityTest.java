@@ -2,6 +2,9 @@ package com.jobseekercopilot.documentstore.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -43,6 +46,9 @@ class DocumentFileReconciliationObservabilityTest {
     @Mock
     private DocumentOperationLock operationLock;
 
+    @Mock
+    private DocumentStorageOperationJournal storageOperationJournal;
+
     private SimpleMeterRegistry registry;
     private DocumentFileService service;
 
@@ -55,7 +61,8 @@ class DocumentFileReconciliationObservabilityTest {
                 objectStorage,
                 fileValidator,
                 operationLock,
-                new DocumentStoreMetrics(registry));
+                new DocumentStoreMetrics(registry),
+                storageOperationJournal);
     }
 
     @Test
@@ -80,6 +87,23 @@ class DocumentFileReconciliationObservabilityTest {
                         .findFirstByGeneratedDocumentIdAndFileTypeOrderByVersionDesc(
                                 documentId, FileType.PDF))
                 .thenReturn(Optional.empty());
+        UUID reservedFileId = UUID.randomUUID();
+        when(storageOperationJournal.highestReservedVersion(
+                        documentId, FileType.PDF))
+                .thenReturn(0);
+        when(storageOperationJournal.prepare(
+                        eq(owner),
+                        eq(documentId),
+                        eq(FileType.PDF),
+                        eq(1),
+                        isNull(),
+                        anyString()))
+                .thenReturn(new StorageOperationReservation(
+                        reservedFileId,
+                        1,
+                        "documents/synthetic/files/"
+                                + reservedFileId
+                                + "/v1"));
         when(fileValidator.decodeAndValidateGenerated(
                         FileType.PDF,
                         "synthetic.pdf",

@@ -12,6 +12,8 @@ DOC-05 file-validation update: 2026-07-26
 
 DOC-10 repository observability update: 2026-07-26
 
+DOC-08 storage-reconciliation update: 2026-07-26
+
 Status: **Not ready for private beta**
 
 ## STORE-01 producer boundary
@@ -121,6 +123,39 @@ DOC-08 must integrate durable reconciliation, while DOCGEN-19 and
 Infrastructure must prove cross-service dashboards, alerts and deployed
 recovery drills.
 
+## DOC-08 storage-reconciliation boundary
+
+File writes now reserve a stable file ID, version and opaque object key in a
+durable PostgreSQL journal before calling object storage. File metadata and the
+journal's `COMMITTED` transition share one transaction; an interrupted write
+therefore remains a recoverable `PREPARED` operation rather than an
+unidentifiable object.
+
+The scheduled reconciler completes `DELETE_PENDING` cleanup, rolls back
+uncommitted prepared objects, repairs prepared journals whose metadata did
+commit, quarantines missing/corrupt/unsafe available objects, and detects
+unknown orphan binaries without deleting them. Each category is bounded and
+uses a durable rotating cursor so a persistent failure cannot starve later
+records. A transaction-scoped lock serializes workers. Logs and metrics expose
+fixed aggregate outcomes only.
+
+The state model, AWS prefix/IAM requirement and guarded manual procedure are in
+[`STORAGE_RECONCILIATION.md`](STORAGE_RECONCILIATION.md). Repository evidence
+does not prove deployed ECS task-role binding, S3/KMS controls, CloudWatch
+alerts or paired managed-store recovery. Those remain Infrastructure
+dependencies.
+
+Local verification passed `mvn -B --no-transfer-progress -Ddebug=false clean
+verify`: 105 tests, zero failures, zero errors and zero skipped, including real
+PostgreSQL 15 migration/schema/concurrency/recovery evidence. The packaged
+image built locally and reached healthy twice across a graceful container
+restart against one disposable PostgreSQL database; startup reconciliation
+completed on both runs. All synthetic containers and the isolated network were
+removed. DOC-08 item/run metrics now use DOC-10's existing bounded
+`document.store.reconciliation.count` contract rather than a second metric
+family. This is repository and local-container evidence, not a deployed AWS
+control.
+
 ## Verified responsibility
 
 The service stores generated CV/cover-letter text in `GeneratedDocument`, file
@@ -154,13 +189,14 @@ deactivated, while exported file replacements mark older files inactive.
    Store bearer/service identity and owner-context contract end to end.
 2. Integrated cross-user tests do not yet cover the complete
    Gateway/CV/Export/Store/Application Tracker journey.
-3. The repository now separates relational metadata and object bytes, but the
-   deployed private bucket, credentials, KMS key, object backup/versioning and
-   restore evidence remain owned by INFRA-08; scheduled cross-store
-   reconciliation remains owned by DOC-08.
-4. There is no draft/final/approved lifecycle, prompt version, model version,
-   generation schema version, claim evidence, retention deadline, deletion
-   audit, or legal-hold/export state.
+3. The repository now separates relational metadata and object bytes and
+   includes bounded scheduled reconciliation, but the deployed private bucket,
+   ECS task-role credentials, KMS key, alerts, object backup/versioning and
+   restore evidence remain owned by Infrastructure.
+4. Draft, approved, current and immutable application-used versions plus
+   non-PII generation-resource provenance now exist. Model/parser provenance,
+   claim evidence, retention deadlines, deletion audit and legal-hold/export
+   states remain incomplete.
 5. Document and exported-file version allocation is now serialized by
    PostgreSQL transaction-scoped locks and protected by database uniqueness.
    Stable operation keys replay the original result or return a deterministic
@@ -168,7 +204,9 @@ deactivated, while exported file replacements mark older files inactive.
 6. Activation/deactivation and file restoration now run as one constrained
    transaction with an enforced single-current marker. Upstream producers
    still need to roll out stable keys under DOCGEN-09.
-7. Deactivation scans all documents in memory for an application.
+7. The legacy application-deactivation endpoint no longer rewrites family
+   current state; consumers still need to migrate fully to immutable
+   application-used references.
 8. Application request/service logs and metric labels now redact stable owner
    and resource identifiers. Operation/denial/reconciliation metrics and
    database/object-storage readiness exist in the repository, but deployed
@@ -178,14 +216,15 @@ deactivated, while exported file replacements mark older files inactive.
     cross-user denial, happy-path CRUD/replacement, production configuration,
     PostgreSQL migration/application-restart persistence, backup/restore
     integrity, legacy object migration, checksum quarantine, E2E seed/reset and
-    synthetic object deletion, plus malicious/corrupt content, spoofed
-    metadata, archive limits and safe downloads. They do not yet cover
-    concurrent versioning, retry replay/conflict, rollback and restore against
-    PostgreSQL. They do not yet cover governed retention/legal hold, deployed
-    encryption or integrated consumers.
-10. Current Spring, Tomcat, Jackson, logging, and Swagger UI dependency
-    findings include untriaged Critical/High advisories; the container has not
-    been scanned.
+    synthetic object deletion, malicious/corrupt content, spoofed metadata,
+    archive limits, safe downloads, concurrent versioning, retry
+    replay/conflict and storage rollback/reconciliation against PostgreSQL.
+    They do not yet cover governed retention/legal hold, deployed encryption
+    or integrated consumers.
+10. Current Spring, Tomcat, Jackson, logging, PostgreSQL driver and Swagger UI
+    dependency findings include untriaged Critical/High advisories. The local
+    image baseline remains owned by DOC-11; this slice does not upgrade or
+    waive those dependencies.
 
 ## Required validation
 

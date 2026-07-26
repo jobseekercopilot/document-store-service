@@ -64,4 +64,21 @@ class FileSystemDocumentObjectStorageTest {
                 .hasMessageContaining("collision");
         assertThat(storage.get("documents/a/files/b/v1")).isEqualTo(original);
     }
+
+    @Test
+    void listsBoundedStablePagesWithoutLeavingTheDocumentPrefix() {
+        var storage = new FileSystemDocumentObjectStorage(root);
+        byte[] content = "page".getBytes(StandardCharsets.UTF_8);
+        storage.put("documents/b/files/2/v1", content, "application/pdf", "digest");
+        storage.put("documents/a/files/1/v1", content, "application/pdf", "digest");
+        storage.put("other/ignored", content, "application/pdf", "digest");
+
+        ObjectKeyPage first = storage.listKeys("documents/", null, 1);
+        ObjectKeyPage second = storage.listKeys("documents/", first.nextAfterKey(), 1);
+
+        assertThat(first.keys()).containsExactly("documents/a/files/1/v1");
+        assertThat(first.nextAfterKey()).isEqualTo("documents/a/files/1/v1");
+        assertThat(second.keys()).containsExactly("documents/b/files/2/v1");
+        assertThat(second.nextAfterKey()).isNull();
+    }
 }

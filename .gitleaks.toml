@@ -1,0 +1,29 @@
+title = "Document Store secret scanning policy"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Bounded correlation ID fixture is not an API credential"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''^src/test/java/com/jobseekercopilot/documentstore/logging/CorrelationIdFilterTest\.java$'''
+]
+regexes = [
+  '''CorrelationIdFilter\.MDC_KEY,\s*"[a-z]+-[a-z]+-[0-9]{3}"'''
+]
+
+[[rules.allowlists]]
+description = "Bounded idempotency key fixture is not an API credential"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''^src/test/java/com/jobseekercopilot/documentstore/controller/GeneratedDocumentControllerIntegrationTest\.java$'''
+]
+regexes = [
+  '''"Idempotency-Key",\s*"[a-z]+-[a-z]+-[0-9]{3}-[a-z]{2}"'''
+]

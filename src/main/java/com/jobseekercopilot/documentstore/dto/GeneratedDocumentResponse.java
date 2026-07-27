@@ -10,7 +10,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Data
@@ -63,16 +63,16 @@ public class GeneratedDocumentResponse {
 
     private GenerationMetadata generationMetadata;
 
-    private LocalDateTime approvedAt;
+    private OffsetDateTime approvedAt;
 
     private String approvedBy;
 
-    private LocalDateTime archivedAt;
+    private OffsetDateTime archivedAt;
 
-    private LocalDateTime deletedAt;
+    private OffsetDateTime deletedAt;
 
     @Schema(description = "Earliest time an authorized purge may be considered")
-    private LocalDateTime purgeEligibleAt;
+    private OffsetDateTime purgeEligibleAt;
 
     private boolean legalHold;
 
@@ -86,8 +86,8 @@ public class GeneratedDocumentResponse {
     private String createdBy;
 
     @Schema(description = "Timestamp when the document was created")
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
     @Schema(description = "Timestamp when the document was updated")
-    private LocalDateTime updatedAt;
+    private OffsetDateTime updatedAt;
 }

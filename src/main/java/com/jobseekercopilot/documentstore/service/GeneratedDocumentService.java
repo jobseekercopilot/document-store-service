@@ -19,6 +19,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import java.time.LocalDateTime;
@@ -387,18 +389,22 @@ public class GeneratedDocumentService {
                 .retentionState(document.getRetentionState())
                 .contentSha256(document.getContentSha256())
                 .generationMetadata(toDto(document.getGenerationProvenance()))
-                .approvedAt(document.getApprovedAt())
+                .approvedAt(withUtcOffset(document.getApprovedAt()))
                 .approvedBy(document.getApprovedBy())
-                .archivedAt(document.getArchivedAt())
-                .deletedAt(document.getDeletedAt())
-                .purgeEligibleAt(document.getPurgeEligibleAt())
+                .archivedAt(withUtcOffset(document.getArchivedAt()))
+                .deletedAt(withUtcOffset(document.getDeletedAt()))
+                .purgeEligibleAt(withUtcOffset(document.getPurgeEligibleAt()))
                 .legalHold(document.isLegalHold())
                 .originalFilename(document.getOriginalFilename())
                 .sourceType(document.getSourceType())
                 .createdBy(document.getCreatedBy())
-                .createdAt(document.getCreatedAt())
-                .updatedAt(document.getUpdatedAt())
+                .createdAt(withUtcOffset(document.getCreatedAt()))
+                .updatedAt(withUtcOffset(document.getUpdatedAt()))
                 .build();
+    }
+
+    private OffsetDateTime withUtcOffset(LocalDateTime value) {
+        return value == null ? null : value.atOffset(ZoneOffset.UTC);
     }
 
     private void requireAvailable(GeneratedDocument document) {

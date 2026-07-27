@@ -2,7 +2,7 @@ package com.jobseekercopilot.documentstore.dto;
 
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleAction;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 import lombok.Builder;
 import lombok.Value;
@@ -17,5 +17,5 @@ public class DocumentLifecycleEventResponse {
     DocumentRetentionState toState;
     String actorId;
     String policyVersion;
-    LocalDateTime occurredAt;
+    OffsetDateTime occurredAt;
 }

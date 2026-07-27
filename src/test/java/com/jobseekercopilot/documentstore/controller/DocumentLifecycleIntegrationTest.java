@@ -2,6 +2,7 @@ package com.jobseekercopilot.documentstore.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -94,7 +95,7 @@ class DocumentLifecycleIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.lifecycleState").value("APPROVED"))
                 .andExpect(jsonPath("$.current").value(true))
-                .andExpect(jsonPath("$.approvedAt").isNotEmpty())
+                .andExpect(jsonPath("$.approvedAt", endsWith("Z")))
                 .andExpect(jsonPath("$.approvedBy").value(OWNER));
 
         mockMvc.perform(get("/api/v1/documents/{id}/reference", firstId)

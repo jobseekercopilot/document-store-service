@@ -34,6 +34,7 @@ or shared values prevent startup.
 | Create document text/metadata | Own subject only | Bound owner | Denied | Denied | Denied |
 | Read/list document text/metadata | Own subject only | Bound owner | Bound owner | Denied | Denied |
 | Archive, restore or soft delete | Own subject only | Bound owner | Denied | Denied | Denied |
+| Atomic generated-withdrawal cleanup | Denied | Bound owner | Denied | Denied | Denied |
 | Apply/release legal hold | Denied | Denied | Denied | Bound owner | Denied |
 | Irreversible guarded purge | Denied | Denied | Denied | Bound owner | Denied |
 | Store generated DOCX/PDF bytes | Denied | Bound owner | Denied | Denied | Denied |

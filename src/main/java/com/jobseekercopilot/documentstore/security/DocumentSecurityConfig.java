@@ -89,6 +89,10 @@ public class DocumentSecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/document-files")
                         .hasAuthority(DocumentAuthorities.PRODUCER)
                         .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/v1/documents/application-withdrawals")
+                        .hasAuthority(DocumentAuthorities.PRODUCER)
+                        .requestMatchers(
                                 HttpMethod.PATCH,
                                 "/api/v1/documents/*/legal-hold")
                         .hasAuthority(DocumentAuthorities.RETENTION_ADMIN)

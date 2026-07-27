@@ -13,6 +13,13 @@ orchestration remains with DOCGEN-09, multi-format export coordination remains
 with Document Export, and application/document link recovery remains with
 Application Tracker.
 
+Generated-withdrawal cleanup uses a separate durable relational command table.
+The operation fingerprint and completion marker are committed in the same
+transaction as both document lifecycle changes, so exact replay is safe and a
+failed transaction leaves no partial cleanup to reconcile. This command does
+not replace the broader APP-08 application/document-link projection and
+reconciliation work.
+
 ## Write and recovery states
 
 Before an object write, Document Store commits a `PREPARED` journal entry with

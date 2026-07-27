@@ -43,6 +43,16 @@ Archive, restore and soft delete are owner-scoped and idempotent:
 - `GET /api/v1/documents/{id}/lifecycle-events` returns the owner-scoped
   transition history while the document exists.
 
+Application Tracker uses the producer-only
+`POST /api/v1/documents/application-withdrawals` command for generated-only
+withdrawal. The command accepts one stable operation ID, application ID and at
+most two exact document IDs. It locks the operation, verifies every document
+belongs to the bound owner and soft-deletes the complete set in one database
+transaction. If one document is absent, foreign, held or otherwise ineligible,
+none of the documents change. An exact replay returns success without a second
+lifecycle event; reuse of the operation ID with a changed payload returns
+`409`.
+
 An archived or deleted version cannot be approved, selected as current,
 referenced for a new application, or receive a new exported file. Application
 history is not rewritten when a version is archived or soft deleted.
@@ -70,6 +80,8 @@ not infer archive, deletion or legal-hold state. A user or approved
 orchestration flow must explicitly approve or transition an eligible version.
 
 The remaining cross-service rollout is owned by DOCGEN-14, DOCGEN-16, APP-08
-and Infrastructure. In particular, Document Store cannot yet prove that every
-Application Tracker reference is reflected in its local `applicationId`; purge
-therefore remains fail-closed until that integration has been demonstrated.
+and Infrastructure. Generated withdrawal cleanup is now atomic and replay-safe.
+Document Store still cannot prove that every Application Tracker reference is
+reflected in its local `applicationId`; replacement and link reconciliation
+remain APP-08 work, and purge therefore stays fail-closed until that integration
+has been demonstrated.

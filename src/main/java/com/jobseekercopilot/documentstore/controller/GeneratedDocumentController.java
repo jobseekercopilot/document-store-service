@@ -5,6 +5,7 @@ import com.jobseekercopilot.documentstore.dto.DocumentReferenceResponse;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
 import com.jobseekercopilot.documentstore.dto.DocumentLifecycleEventResponse;
 import com.jobseekercopilot.documentstore.dto.LegalHoldRequest;
+import com.jobseekercopilot.documentstore.dto.ApplicationWithdrawalCleanupRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.service.GeneratedDocumentService;
@@ -65,6 +66,31 @@ public class GeneratedDocumentController {
         GeneratedDocumentResponse response =
                 service.createDocument(ownerId, request, idempotencyKey);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @PostMapping("/application-withdrawals")
+    @Operation(
+            summary = "Atomically soft-delete generated-only application documents",
+            description =
+                    "Executes one owner-scoped Application Tracker workflow command; replaying the same exact document IDs is safe")
+    @SecurityRequirement(name = "serviceToken")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "204", description = "All selected documents are soft deleted"),
+            @ApiResponse(responseCode = "400", description = "Invalid or duplicate document IDs"),
+            @ApiResponse(responseCode = "404", description = "A selected document is absent or belongs to another owner"),
+            @ApiResponse(responseCode = "409", description = "A selected document is protected from deletion")
+    })
+    public ResponseEntity<Void> cleanupApplicationWithdrawal(
+            @Valid @RequestBody ApplicationWithdrawalCleanupRequest request,
+            @Parameter(description = "Required owner context for the Application Tracker producer")
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId =
+                ownerResolver.resolve(authentication, requestedOwner, null);
+        retentionService.softDeleteForApplicationWithdrawal(
+                ownerId, request, authentication.getName());
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/{id}")

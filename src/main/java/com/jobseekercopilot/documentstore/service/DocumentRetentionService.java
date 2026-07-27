@@ -3,8 +3,10 @@ package com.jobseekercopilot.documentstore.service;
 import com.jobseekercopilot.documentstore.config.DocumentRetentionProperties;
 import com.jobseekercopilot.documentstore.dto.DocumentLifecycleEventResponse;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
+import com.jobseekercopilot.documentstore.dto.ApplicationWithdrawalCleanupRequest;
 import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleAction;
+import com.jobseekercopilot.documentstore.entity.DocumentApplicationWorkflowCommand;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleEvent;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
@@ -13,10 +15,12 @@ import com.jobseekercopilot.documentstore.entity.StorageOperationState;
 import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.exception.ResourceNotFoundException;
 import com.jobseekercopilot.documentstore.repository.DocumentLifecycleEventRepository;
+import com.jobseekercopilot.documentstore.repository.DocumentApplicationWorkflowCommandRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentStorageOperationRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.HashSet;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -33,6 +37,8 @@ public class DocumentRetentionService {
 
     private final GeneratedDocumentRepository documentRepository;
     private final DocumentLifecycleEventRepository eventRepository;
+    private final DocumentApplicationWorkflowCommandRepository
+            applicationWorkflowCommandRepository;
     private final DocumentStorageOperationRepository storageOperationRepository;
     private final DocumentFileLifecycleService fileLifecycleService;
     private final DocumentOperationLock operationLock;
@@ -86,6 +92,72 @@ public class DocumentRetentionService {
 
     @Transactional
     public void softDelete(String ownerId, UUID documentId, String actorId) {
+        softDeleteInternal(ownerId, documentId, actorId, null);
+    }
+
+    @Transactional
+    public void softDeleteForApplicationWithdrawal(
+            String ownerId,
+            ApplicationWithdrawalCleanupRequest request,
+            String actorId) {
+        List<UUID> documentIds = request.getDocumentIds().stream()
+                .sorted()
+                .toList();
+        if (new HashSet<>(documentIds).size() != documentIds.size()) {
+            throw new IllegalArgumentException(
+                    "Application withdrawal document IDs must be distinct.");
+        }
+        operationLock.acquire(
+                "application-withdrawal:" + OperationFingerprint.sha256(
+                        ownerId,
+                        request.getApplicationId(),
+                        request.getOperationId()));
+        String requestSha256 = OperationFingerprint.sha256(
+                ownerId,
+                request.getApplicationId(),
+                documentIds);
+        DocumentApplicationWorkflowCommand existing =
+                applicationWorkflowCommandRepository
+                        .findByOperationIdAndOwnerId(
+                                request.getOperationId(), ownerId)
+                        .orElse(null);
+        if (existing != null) {
+            if (!existing.getApplicationId()
+                            .equals(request.getApplicationId())
+                    || !existing.getRequestSha256()
+                            .equals(requestSha256)) {
+                throw new OperationConflictException(
+                        "Application withdrawal operation was reused with a different request.");
+            }
+            return;
+        }
+        String operationReference = request.getOperationId().toString();
+        for (UUID documentId : documentIds) {
+            softDeleteInternal(
+                    ownerId,
+                    documentId,
+                    actorId,
+                    operationReference);
+        }
+        applicationWorkflowCommandRepository.saveAndFlush(
+                DocumentApplicationWorkflowCommand.builder()
+                        .operationId(request.getOperationId())
+                        .ownerId(ownerId)
+                        .applicationId(request.getApplicationId())
+                        .commandType("GENERATED_WITHDRAWAL")
+                        .requestSha256(requestSha256)
+                        .status("COMPLETED")
+                        .build());
+        log.info(
+                "Application withdrawal document cleanup completed documentCount={}",
+                documentIds.size());
+    }
+
+    private void softDeleteInternal(
+            String ownerId,
+            UUID documentId,
+            String actorId,
+            String operationReference) {
         GeneratedDocument document = lockOwnedDocument(ownerId, documentId);
         if (document.getRetentionState() == DocumentRetentionState.DELETED) {
             return;
@@ -103,7 +175,13 @@ public class DocumentRetentionService {
         document.setDeletedBy(actor(actorId));
         document.setPurgeEligibleAt(now.plusDays(properties.getRecoveryDays()));
         documentRepository.saveAndFlush(document);
-        record(document, DocumentLifecycleAction.SOFT_DELETED, previous, actorId, now);
+        record(
+                document,
+                DocumentLifecycleAction.SOFT_DELETED,
+                previous,
+                actorId,
+                now,
+                operationReference);
         log.info("Document soft deleted documentType={} version={}",
                 document.getDocumentType(), document.getVersion());
     }

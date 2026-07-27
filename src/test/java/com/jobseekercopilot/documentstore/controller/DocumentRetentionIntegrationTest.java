@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobseekercopilot.documentstore.TestDocumentFiles;
 import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
+import com.jobseekercopilot.documentstore.dto.ApplicationWithdrawalCleanupRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleAction;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleEvent;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
@@ -30,6 +31,7 @@ import com.jobseekercopilot.documentstore.service.DocumentRetentionMaintenanceSe
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import java.time.LocalDateTime;
 import java.util.Base64;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -201,6 +203,94 @@ class DocumentRetentionIntegrationTest {
         mockMvc.perform(get("/api/v1/document-files/{id}/download", fileId)
                         .headers(producerHeaders(OWNER)))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void applicationWithdrawalCleanupIsAtomicOwnerScopedAndReplaySafe()
+            throws Exception {
+        GeneratedDocument cv = approvedDocument(null);
+        GeneratedDocument coverLetter = approvedDocument(null);
+        UUID operationId = UUID.randomUUID();
+        ApplicationWithdrawalCleanupRequest request =
+                ApplicationWithdrawalCleanupRequest.builder()
+                        .operationId(operationId)
+                        .applicationId(UUID.randomUUID())
+                        .documentIds(List.of(cv.getId(), coverLetter.getId()))
+                        .build();
+
+        mockMvc.perform(post("/api/v1/documents/application-withdrawals")
+                        .headers(producerHeaders(OTHER_OWNER))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound());
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(post("/api/v1/documents/application-withdrawals")
+                            .headers(producerHeaders(OWNER))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isNoContent());
+        }
+
+        assertThat(documentRepository.findById(cv.getId()).orElseThrow()
+                        .getRetentionState())
+                .isEqualTo(DocumentRetentionState.DELETED);
+        assertThat(documentRepository.findById(coverLetter.getId()).orElseThrow()
+                        .getRetentionState())
+                .isEqualTo(DocumentRetentionState.DELETED);
+        assertThat(eventRepository.findByDocumentIdAndOwnerIdOrderByOccurredAtAsc(
+                        cv.getId(), OWNER))
+                .singleElement()
+                .extracting(DocumentLifecycleEvent::getCaseReference)
+                .isEqualTo(operationId.toString());
+        assertThat(eventRepository.findByDocumentIdAndOwnerIdOrderByOccurredAtAsc(
+                        coverLetter.getId(), OWNER))
+                .singleElement()
+                .extracting(DocumentLifecycleEvent::getCaseReference)
+                .isEqualTo(operationId.toString());
+
+        GeneratedDocument unrelated = approvedDocument(null);
+        ApplicationWithdrawalCleanupRequest changedReplay =
+                ApplicationWithdrawalCleanupRequest.builder()
+                        .operationId(operationId)
+                        .applicationId(request.getApplicationId())
+                        .documentIds(List.of(cv.getId(), unrelated.getId()))
+                        .build();
+        mockMvc.perform(post("/api/v1/documents/application-withdrawals")
+                        .headers(producerHeaders(OWNER))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(changedReplay)))
+                .andExpect(status().isConflict());
+        assertThat(documentRepository.findById(unrelated.getId()).orElseThrow()
+                        .getRetentionState())
+                .isEqualTo(DocumentRetentionState.AVAILABLE);
+    }
+
+    @Test
+    void applicationWithdrawalCleanupRollsBackEveryDocumentWhenOneIsMissing()
+            throws Exception {
+        GeneratedDocument existing = approvedDocument(null);
+        UUID missing =
+                UUID.fromString("ffffffff-ffff-4fff-bfff-ffffffffffff");
+        ApplicationWithdrawalCleanupRequest request =
+                ApplicationWithdrawalCleanupRequest.builder()
+                        .operationId(UUID.randomUUID())
+                        .applicationId(UUID.randomUUID())
+                        .documentIds(List.of(existing.getId(), missing))
+                        .build();
+
+        mockMvc.perform(post("/api/v1/documents/application-withdrawals")
+                        .headers(producerHeaders(OWNER))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound());
+
+        assertThat(documentRepository.findById(existing.getId()).orElseThrow()
+                        .getRetentionState())
+                .isEqualTo(DocumentRetentionState.AVAILABLE);
+        assertThat(eventRepository.findByDocumentIdAndOwnerIdOrderByOccurredAtAsc(
+                        existing.getId(), OWNER))
+                .isEmpty();
     }
 
     @Test

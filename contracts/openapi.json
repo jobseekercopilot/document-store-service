@@ -9,7 +9,7 @@
     "license" : {
       "name" : "Proprietary and confidential"
     },
-    "version" : "2.1.0"
+    "version" : "2.2.0"
   },
   "servers" : [ {
     "url" : "http://localhost:8089",
@@ -193,22 +193,22 @@
           }
         },
         "responses" : {
-          "404" : {
-            "description" : "Generated document not found",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/DocumentFileResponse"
-                }
-              }
-            }
-          },
           "413" : {
             "description" : "Upload exceeds a configured safety limit",
             "content" : {
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Generated document not found",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentFileResponse"
                 }
               }
             }
@@ -286,6 +286,50 @@
         } ]
       }
     },
+    "/api/v1/documents/application-withdrawals" : {
+      "post" : {
+        "tags" : [ "Generated Documents" ],
+        "summary" : "Atomically soft-delete generated-only application documents",
+        "description" : "Executes one owner-scoped Application Tracker workflow command; replaying the same exact document IDs is safe",
+        "operationId" : "cleanupApplicationWithdrawal",
+        "parameters" : [ {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "description" : "Required owner context for the Application Tracker producer",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ApplicationWithdrawalCleanupRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "409" : {
+            "description" : "A selected document is protected from deletion"
+          },
+          "404" : {
+            "description" : "A selected document is absent or belongs to another owner"
+          },
+          "400" : {
+            "description" : "Invalid or duplicate document IDs"
+          },
+          "204" : {
+            "description" : "All selected documents are soft deleted"
+          }
+        },
+        "security" : [ {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
     "/api/v1/document-files" : {
       "post" : {
         "tags" : [ "Document Files" ],
@@ -330,16 +374,6 @@
               }
             }
           },
-          "413" : {
-            "description" : "Decoded file or archive exceeds a configured safety limit",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "201" : {
             "description" : "Exported file saved successfully",
             "content" : {
@@ -366,6 +400,16 @@
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          },
+          "413" : {
+            "description" : "Decoded file or archive exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1944,6 +1988,34 @@
           }
         },
         "description" : "Metadata for an exported document file"
+      },
+      "ApplicationWithdrawalCleanupRequest" : {
+        "required" : [ "applicationId", "documentIds", "operationId" ],
+        "type" : "object",
+        "properties" : {
+          "operationId" : {
+            "type" : "string",
+            "description" : "Durable Application Tracker workflow operation ID",
+            "format" : "uuid"
+          },
+          "applicationId" : {
+            "type" : "string",
+            "description" : "Application whose generated-only draft is being withdrawn",
+            "format" : "uuid"
+          },
+          "documentIds" : {
+            "maxItems" : 2,
+            "minItems" : 0,
+            "type" : "array",
+            "description" : "Exact owner-scoped generated document version IDs",
+            "items" : {
+              "type" : "string",
+              "description" : "Exact owner-scoped generated document version IDs",
+              "format" : "uuid"
+            }
+          }
+        },
+        "description" : "Atomic, replay-safe cleanup command owned by an Application Tracker withdrawal workflow"
       },
       "CreateDocumentFileRequest" : {
         "required" : [ "fileContentBase64", "fileName", "fileType", "generatedDocumentId", "mimeType" ],

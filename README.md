@@ -43,7 +43,10 @@ remain required.
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-2.1.0 contract. Maven verification fails when the running contract drifts from
+2.2.0 contract. It adds the producer-only, owner-scoped atomic cleanup command
+used by Application Tracker's durable generated-withdrawal workflow. Replaying
+the same exact document set is safe, and a failure rolls back the entire Store
+transaction. Maven verification fails when the running contract drifts from
 this file.
 
 The identity sources, least-privilege service roles, authorization matrix,

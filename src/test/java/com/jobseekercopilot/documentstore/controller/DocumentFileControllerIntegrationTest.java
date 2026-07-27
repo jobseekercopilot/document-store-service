@@ -25,6 +25,8 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.UUID;
 
@@ -91,6 +93,7 @@ class DocumentFileControllerIntegrationTest {
                 .getContentAsString();
 
         JsonNode json = objectMapper.readTree(response);
+        assertEquals(ZoneOffset.UTC, OffsetDateTime.parse(json.get("createdAt").asText()).getOffset());
         assertFalse(json.has("fileContentBase64"));
         var stored = fileRepository.findById(UUID.fromString(json.get("id").asText()))
                 .orElseThrow();

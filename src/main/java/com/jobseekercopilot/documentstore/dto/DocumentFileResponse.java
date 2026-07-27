@@ -8,7 +8,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Data
@@ -52,11 +52,11 @@ public class DocumentFileResponse {
     private com.jobseekercopilot.documentstore.entity.ObjectStorageStatus storageStatus;
 
     @Schema(description = "Timestamp when the object store accepted the file")
-    private LocalDateTime storedAt;
+    private OffsetDateTime storedAt;
 
     @Schema(description = "Timestamp when the exported file was saved")
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
     @Schema(description = "Timestamp when the exported file was last updated")
-    private LocalDateTime updatedAt;
+    private OffsetDateTime updatedAt;
 }

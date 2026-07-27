@@ -19,6 +19,8 @@ import com.jobseekercopilot.documentstore.repository.DocumentApplicationWorkflow
 import com.jobseekercopilot.documentstore.repository.DocumentStorageOperationRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.HashSet;
 import java.util.UUID;
@@ -297,9 +299,13 @@ public class DocumentRetentionService {
                         .toState(event.getToState())
                         .actorId(event.getActorId())
                         .policyVersion(event.getPolicyVersion())
-                        .occurredAt(event.getOccurredAt())
+                        .occurredAt(withUtcOffset(event.getOccurredAt()))
                         .build())
                 .toList();
+    }
+
+    private OffsetDateTime withUtcOffset(LocalDateTime value) {
+        return value == null ? null : value.atOffset(ZoneOffset.UTC);
     }
 
     private GeneratedDocument lockOwnedDocument(String ownerId, UUID documentId) {
@@ -374,17 +380,17 @@ public class DocumentRetentionService {
                 .retentionState(document.getRetentionState())
                 .contentSha256(document.getContentSha256())
                 .generationMetadata(generationMetadata(document.getGenerationProvenance()))
-                .approvedAt(document.getApprovedAt())
+                .approvedAt(withUtcOffset(document.getApprovedAt()))
                 .approvedBy(document.getApprovedBy())
-                .archivedAt(document.getArchivedAt())
-                .deletedAt(document.getDeletedAt())
-                .purgeEligibleAt(document.getPurgeEligibleAt())
+                .archivedAt(withUtcOffset(document.getArchivedAt()))
+                .deletedAt(withUtcOffset(document.getDeletedAt()))
+                .purgeEligibleAt(withUtcOffset(document.getPurgeEligibleAt()))
                 .legalHold(document.isLegalHold())
                 .originalFilename(document.getOriginalFilename())
                 .sourceType(document.getSourceType())
                 .createdBy(document.getCreatedBy())
-                .createdAt(document.getCreatedAt())
-                .updatedAt(document.getUpdatedAt())
+                .createdAt(withUtcOffset(document.getCreatedAt()))
+                .updatedAt(withUtcOffset(document.getUpdatedAt()))
                 .build();
     }
 

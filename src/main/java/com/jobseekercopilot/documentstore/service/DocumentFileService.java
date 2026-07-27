@@ -24,6 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
@@ -416,9 +419,13 @@ public class DocumentFileService {
                 .contentSize(file.getContentSize())
                 .contentSha256(file.getContentSha256())
                 .storageStatus(file.getStorageStatus())
-                .storedAt(file.getStoredAt())
-                .createdAt(file.getCreatedAt())
-                .updatedAt(file.getUpdatedAt())
+                .storedAt(withUtcOffset(file.getStoredAt()))
+                .createdAt(withUtcOffset(file.getCreatedAt()))
+                .updatedAt(withUtcOffset(file.getUpdatedAt()))
                 .build();
+    }
+
+    private OffsetDateTime withUtcOffset(LocalDateTime value) {
+        return value == null ? null : value.atOffset(ZoneOffset.UTC);
     }
 }

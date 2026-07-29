@@ -4,6 +4,7 @@ import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
+import com.jobseekercopilot.documentstore.entity.DocumentGroundingState;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -62,6 +63,16 @@ public class GeneratedDocumentResponse {
     private String contentSha256;
 
     private GenerationMetadata generationMetadata;
+
+    private DocumentEvidenceProvenance evidenceProvenance;
+
+    @Schema(description = "Evidence-review state for this immutable document version")
+    private DocumentGroundingState groundingState;
+
+    @Schema(description = "Immediate parent document version, when this is a later version")
+    private UUID parentDocumentId;
+
+    private Integer parentDocumentVersion;
 
     private OffsetDateTime approvedAt;
 

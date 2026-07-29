@@ -62,6 +62,14 @@ public class CreateDocumentRequest {
     @Schema(description = "Required before a generated draft can be approved; omitted for uploads")
     private GenerationMetadata generationMetadata;
 
+    @Valid
+    @Schema(
+            description = """
+                    Immutable profile, evidence-snapshot and validated claim
+                    provenance for versioned evidence generation.
+                    """)
+    private DocumentEvidenceProvenance evidenceProvenance;
+
     @Schema(description = "User or service that created this document", example = "user-123")
     private String createdBy;
 }

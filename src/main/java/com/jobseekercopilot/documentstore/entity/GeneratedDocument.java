@@ -5,6 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Embedded;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -16,6 +17,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
+import com.jobseekercopilot.documentstore.dto.DocumentEvidenceProvenance;
 
 @Entity
 @Table(name = "generated_documents")
@@ -72,6 +74,20 @@ public class GeneratedDocument {
 
     @Embedded
     private GenerationProvenance generationProvenance;
+
+    @Convert(converter = DocumentEvidenceProvenanceConverter.class)
+    @Column(name = "evidence_provenance_json", columnDefinition = "TEXT")
+    private DocumentEvidenceProvenance evidenceProvenance;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 48)
+    @Builder.Default
+    private DocumentGroundingState groundingState =
+            DocumentGroundingState.LEGACY_UNSPECIFIED;
+
+    private UUID parentDocumentId;
+
+    private Integer parentDocumentVersion;
 
     private LocalDateTime approvedAt;
 
@@ -142,6 +158,11 @@ public class GeneratedDocument {
         }
         if (sourceType == null) {
             sourceType = DocumentSourceType.GENERATED;
+        }
+        if (groundingState == null) {
+            groundingState = sourceType == DocumentSourceType.UPLOADED
+                    ? DocumentGroundingState.USER_EDITED_REVIEW_REQUIRED
+                    : DocumentGroundingState.LEGACY_UNSPECIFIED;
         }
         if (lifecycleState == null) {
             lifecycleState = DocumentLifecycleState.DRAFT;

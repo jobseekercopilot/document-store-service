@@ -1,6 +1,7 @@
 package com.jobseekercopilot.documentstore.dto;
 
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
+import com.jobseekercopilot.documentstore.entity.DocumentGroundingState;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.UUID;
@@ -26,4 +27,8 @@ public class DocumentReferenceResponse {
     private DocumentLifecycleState lifecycleState;
     private boolean current;
     private GenerationMetadata generationMetadata;
+    private DocumentEvidenceProvenance evidenceProvenance;
+    private DocumentGroundingState groundingState;
+    private UUID parentDocumentId;
+    private Integer parentDocumentVersion;
 }

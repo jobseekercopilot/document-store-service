@@ -2,14 +2,17 @@ package com.jobseekercopilot.documentstore.service;
 
 import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
 import com.jobseekercopilot.documentstore.dto.DocumentReferenceResponse;
+import com.jobseekercopilot.documentstore.dto.DocumentEvidenceProvenance;
 import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
+import com.jobseekercopilot.documentstore.entity.DocumentGroundingState;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
 import com.jobseekercopilot.documentstore.entity.GenerationProvenance;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
+import com.jobseekercopilot.documentstore.entity.DocumentEvidenceProvenanceConverter;
 import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.exception.ResourceNotFoundException;
 import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
@@ -22,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.HashSet;
 import java.util.UUID;
 import java.time.LocalDateTime;
 import java.util.stream.Collectors;
@@ -63,6 +67,8 @@ public class GeneratedDocumentService {
                 ? DocumentSourceType.GENERATED
                 : request.getSourceType();
         validateGenerationMetadata(sourceType, request.getGenerationMetadata());
+        validateEvidenceProvenance(
+                sourceType, request.getEvidenceProvenance());
         String fingerprint = OperationFingerprint.sha256(
                 applicationId,
                 request.getDocumentFamilyId(),
@@ -74,6 +80,8 @@ public class GeneratedDocumentService {
                 blankToNull(request.getOriginalFilename()),
                 sourceType,
                 generationMetadataFingerprint(request.getGenerationMetadata()),
+                DocumentEvidenceProvenanceConverter.encode(
+                        request.getEvidenceProvenance()),
                 blankToNull(request.getCreatedBy()));
 
         if (operationKey != null) {
@@ -115,6 +123,15 @@ public class GeneratedDocumentService {
                 .active(false)
                 .lifecycleState(DocumentLifecycleState.DRAFT)
                 .generationProvenance(toEntity(request.getGenerationMetadata()))
+                .evidenceProvenance(request.getEvidenceProvenance())
+                .groundingState(groundingState(
+                        sourceType, request.getEvidenceProvenance()))
+                .parentDocumentId(
+                        latestVersion == null ? null : latestVersion.getId())
+                .parentDocumentVersion(
+                        latestVersion == null
+                                ? null
+                                : latestVersion.getVersion())
                 .operationKey(operationKey)
                 .requestSha256(operationKey == null ? null : fingerprint)
                 .originalFilename(blankToNull(request.getOriginalFilename()))
@@ -356,6 +373,53 @@ public class GeneratedDocumentService {
         }
     }
 
+    private void validateEvidenceProvenance(
+            DocumentSourceType sourceType,
+            DocumentEvidenceProvenance provenance) {
+        if (sourceType == DocumentSourceType.UPLOADED
+                && provenance != null) {
+            throw new IllegalArgumentException(
+                    "Uploaded documents cannot assert generated evidence provenance.");
+        }
+        if (provenance == null) {
+            return;
+        }
+        String calculated = ValidatedClaimLedgerDigest.calculate(
+                provenance.claimLedger());
+        if (!calculated.equals(
+                provenance.claimLedger().ledgerSha256())) {
+            throw new IllegalArgumentException(
+                    "Validated claim ledger digest does not match its exact claims.");
+        }
+        if (new HashSet<>(provenance.sectionOrder()).size()
+                != provenance.sectionOrder().size()) {
+            throw new IllegalArgumentException(
+                    "Evidence section order contains duplicates.");
+        }
+        HashSet<UUID> entryIds = new HashSet<>();
+        HashSet<UUID> revisionIds = new HashSet<>();
+        provenance.evidenceRevisions().forEach(reference -> {
+            if (!entryIds.add(reference.entryId())
+                    || !revisionIds.add(reference.revisionId())
+                    || !provenance.sectionOrder().contains(
+                            reference.category())) {
+                throw new IllegalArgumentException(
+                        "Evidence provenance contains duplicate or unordered revisions.");
+            }
+        });
+    }
+
+    private DocumentGroundingState groundingState(
+            DocumentSourceType sourceType,
+            DocumentEvidenceProvenance provenance) {
+        if (sourceType == DocumentSourceType.UPLOADED) {
+            return DocumentGroundingState.USER_EDITED_REVIEW_REQUIRED;
+        }
+        return provenance == null
+                ? DocumentGroundingState.LEGACY_UNSPECIFIED
+                : DocumentGroundingState.AI_GENERATED_EVIDENCE_VALIDATED;
+    }
+
     private void requireMatchingFingerprint(String stored, String requested) {
         if (!requested.equals(stored)) {
             throw new OperationConflictException(
@@ -389,6 +453,10 @@ public class GeneratedDocumentService {
                 .retentionState(document.getRetentionState())
                 .contentSha256(document.getContentSha256())
                 .generationMetadata(toDto(document.getGenerationProvenance()))
+                .evidenceProvenance(document.getEvidenceProvenance())
+                .groundingState(document.getGroundingState())
+                .parentDocumentId(document.getParentDocumentId())
+                .parentDocumentVersion(document.getParentDocumentVersion())
                 .approvedAt(withUtcOffset(document.getApprovedAt()))
                 .approvedBy(document.getApprovedBy())
                 .archivedAt(withUtcOffset(document.getArchivedAt()))
@@ -426,6 +494,10 @@ public class GeneratedDocumentService {
                 .lifecycleState(document.getLifecycleState())
                 .current(document.isActive())
                 .generationMetadata(toDto(document.getGenerationProvenance()))
+                .evidenceProvenance(document.getEvidenceProvenance())
+                .groundingState(document.getGroundingState())
+                .parentDocumentId(document.getParentDocumentId())
+                .parentDocumentVersion(document.getParentDocumentVersion())
                 .build();
     }
 

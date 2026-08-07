@@ -37,9 +37,10 @@ public class DocumentRetentionMaintenanceScheduler {
                     .increment();
             log.info(
                     "Document retention maintenance completed "
-                            + "completedStorageOperationsPurged={} lifecycleEventsPurged={}",
+                            + "completedStorageOperationsPurged={} lifecycleEventsPurged={} activityEventsPurged={}",
                     report.completedStorageOperationsPurged(),
-                    report.lifecycleEventsPurged());
+                    report.lifecycleEventsPurged(),
+                    report.activityEventsPurged());
         } catch (RuntimeException exception) {
             meterRegistry.counter(
                             "document_store_retention_maintenance_runs_total",

@@ -5,8 +5,9 @@ import com.jobseekercopilot.documentstore.dto.DocumentReferenceResponse;
 import com.jobseekercopilot.documentstore.dto.DocumentEvidenceProvenance;
 import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
-import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
+import com.jobseekercopilot.documentstore.entity.DocumentActivityType;
 import com.jobseekercopilot.documentstore.entity.DocumentGroundingState;
+import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
@@ -38,6 +39,7 @@ public class GeneratedDocumentService {
     private final DocumentRetentionService retentionService;
     private final DocumentOperationLock operationLock;
     private final DocumentStoreMetrics metrics;
+    private final DocumentActivityService activityService;
 
     @Transactional
     public GeneratedDocumentResponse createDocument(
@@ -143,6 +145,12 @@ public class GeneratedDocumentService {
                 .build();
 
         GeneratedDocument saved = repository.saveAndFlush(document);
+        activityService.recordOnce(
+                "document-created:" + saved.getId(),
+                DocumentActivityType.DOCUMENT_VERSION_CREATED,
+                saved,
+                "CREATED",
+                saved.getCreatedAt());
         metrics.recordPayload(
                 "document",
                 "stored",
@@ -348,6 +356,11 @@ public class GeneratedDocumentService {
         deactivateCurrentVersions(ownerId, document.getDocumentFamilyId());
         document.setActive(true);
         repository.saveAndFlush(document);
+        activityService.record(
+                DocumentActivityType.DOCUMENT_CURRENT_VERSION_CHANGED,
+                document,
+                "CURRENT_SELECTED",
+                LocalDateTime.now());
         return mapToResponse(document);
     }
 

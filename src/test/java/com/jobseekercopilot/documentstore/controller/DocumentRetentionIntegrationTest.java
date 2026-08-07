@@ -21,6 +21,8 @@ import com.jobseekercopilot.documentstore.dto.DocumentApplicationAssociationSnap
 import com.jobseekercopilot.documentstore.dto.DocumentApplicationAssociationsSnapshot;
 import com.jobseekercopilot.documentstore.entity.DocumentApplicationAssociationState;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleAction;
+import com.jobseekercopilot.documentstore.entity.DocumentActivityEvent;
+import com.jobseekercopilot.documentstore.entity.DocumentActivityType;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleEvent;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
@@ -31,6 +33,7 @@ import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.entity.StorageOperationState;
 import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.repository.DocumentLifecycleEventRepository;
+import com.jobseekercopilot.documentstore.repository.DocumentActivityEventRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentStorageOperationRepository;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
@@ -86,6 +89,9 @@ class DocumentRetentionIntegrationTest {
 
     @Autowired
     private DocumentLifecycleEventRepository eventRepository;
+
+    @Autowired
+    private DocumentActivityEventRepository activityEventRepository;
 
     @Autowired
     private DocumentStorageOperationRepository operationRepository;
@@ -570,15 +576,30 @@ class DocumentRetentionIntegrationTest {
                 .occurredAt(old)
                 .retentionExpiresAt(LocalDateTime.now().minusSeconds(1))
                 .build());
+        activityEventRepository.saveAndFlush(DocumentActivityEvent.builder()
+                .eventKey("expired-activity")
+                .ownerId(OWNER)
+                .eventType(DocumentActivityType.DOCUMENT_VERSION_ARCHIVED)
+                .documentId(document.getId())
+                .documentFamilyId(document.getDocumentFamilyId())
+                .documentType(document.getDocumentType())
+                .sourceType(document.getSourceType())
+                .version(document.getVersion())
+                .result("ARCHIVED")
+                .occurredAt(old)
+                .retentionExpiresAt(LocalDateTime.now().minusSeconds(1))
+                .build());
 
         var report = maintenanceService.purgeExpiredAuditHistory();
 
         assertThat(report.completedStorageOperationsPurged()).isEqualTo(2);
         assertThat(report.lifecycleEventsPurged()).isEqualTo(1);
+        assertThat(report.activityEventsPurged()).isEqualTo(1);
         assertThat(operationRepository.findById(prepared.getFileId())).isPresent();
         assertThat(operationRepository.findById(committed.getFileId())).isEmpty();
         assertThat(operationRepository.findById(rolledBack.getFileId())).isEmpty();
         assertThat(eventRepository.count()).isZero();
+        assertThat(activityEventRepository.count()).isZero();
     }
 
     private void softDeleteAndExpire(GeneratedDocument document) throws Exception {

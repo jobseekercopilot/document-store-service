@@ -73,6 +73,20 @@ control/format characters, path separators, drive/alternate-stream separators
 and extension/type mismatch. Caller filenames are never returned as download
 names.
 
+The canonical exact-artifact route binds both the document-version UUID and
+artifact UUID. The pair, authenticated owner, parent retention state and
+artifact availability must all match. `AVAILABLE` artifacts on `AVAILABLE` or
+`ARCHIVED` parents are eligible whether or not the artifact is active. Deleted
+parents and every non-`AVAILABLE` artifact status are non-enumerating denials.
+The legacy artifact-ID route applies the same retained-artifact rules for
+backward compatibility.
+
+A successful download is a read: it does not activate an artifact, move a
+family current pointer, create a version or emit lifecycle state. Size,
+SHA-256 and structural/type checks still run before bytes are returned. A
+failed integrity or safety check follows the established quarantine policy by
+marking the artifact inactive and `UNAVAILABLE` before returning `503`.
+
 ## Malware-scanning decision and residual risk
 
 No paid malware-scanning service is authorised for the private beta. The beta

@@ -10,6 +10,7 @@ import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.service.DocumentFileService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.headers.Header;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -153,11 +154,22 @@ public class DocumentFileController {
     }
 
     @GetMapping("/api/v1/document-files/{id}/download")
-    @Operation(summary = "Download exported file")
+    @Operation(
+            summary = "Download an exact retained artifact (legacy route)",
+            description = "Downloads the owner-authorised retained artifact without activating it or changing document state. Prefer the document/artifact relationship route for new consumers.")
     @SecurityRequirement(name = "bearerAuth")
     @SecurityRequirement(name = "serviceToken")
     @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "Exported file bytes"),
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Exact retained artifact bytes",
+                    headers = {
+                            @Header(name = "Content-Disposition", schema = @Schema(type = "string")),
+                            @Header(name = "X-Content-Type-Options", schema = @Schema(type = "string")),
+                            @Header(name = "Cache-Control", schema = @Schema(type = "string")),
+                            @Header(name = "Pragma", schema = @Schema(type = "string")),
+                            @Header(name = "Content-Length", schema = @Schema(type = "integer", format = "int64"))
+                    }),
             @ApiResponse(responseCode = "404", description = "Exported file not found"),
             @ApiResponse(
                     responseCode = "503",
@@ -172,6 +184,50 @@ public class DocumentFileController {
             @Parameter(hidden = true) Authentication authentication) {
         String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
         DocumentFileDownload file = service.downloadDocumentFile(ownerId, id);
+        return downloadResponse(file);
+    }
+
+    @GetMapping("/api/v1/documents/{generatedDocumentId}/artifacts/{artifactId}/download")
+    @Operation(
+            summary = "Download an exact retained document artifact",
+            description = "Validates the exact document-version/artifact relationship and downloads an available retained artifact, including one on an archived version, without changing state")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Exact retained artifact bytes",
+                    headers = {
+                            @Header(name = "Content-Disposition", schema = @Schema(type = "string")),
+                            @Header(name = "X-Content-Type-Options", schema = @Schema(type = "string")),
+                            @Header(name = "Cache-Control", schema = @Schema(type = "string")),
+                            @Header(name = "Pragma", schema = @Schema(type = "string")),
+                            @Header(name = "Content-Length", schema = @Schema(type = "integer", format = "int64"))
+                    }),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Artifact not found, unavailable, not owned or not related to the document version"),
+            @ApiResponse(
+                    responseCode = "503",
+                    description = "Stored artifact failed integrity or safety validation",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    public ResponseEntity<byte[]> downloadDocumentArtifact(
+            @Parameter(description = "UUID of the exact document version")
+            @PathVariable UUID generatedDocumentId,
+            @Parameter(description = "UUID of its exact retained artifact")
+            @PathVariable UUID artifactId,
+            @Parameter(description = "Required owner context for approved service identities")
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        DocumentFileDownload file = service.downloadDocumentArtifact(
+                ownerId, generatedDocumentId, artifactId);
+        return downloadResponse(file);
+    }
+
+    private ResponseEntity<byte[]> downloadResponse(DocumentFileDownload file) {
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(file.mimeType()))
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()

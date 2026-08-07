@@ -43,10 +43,13 @@ remain required.
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-3.0.0 contract. It includes content-free paged family summaries, newest-first
+3.1.0 contract. It includes content-free paged family summaries, newest-first
 server-numbered history, safe exact-artifact manifests and a concurrency- and
 idempotency-protected explicit current-pointer command. Approval and current
-selection are independent. The contract also retains immutable
+selection are independent. Exact retained artifacts can be downloaded through
+their document-version/artifact relationship even when inactive or archived;
+successful downloads never activate or otherwise mutate them. The contract
+also retains immutable
 profile/evidence-snapshot provenance, validated claim-ledger identity,
 grounding state, parent-version linkage and the producer-only owner-scoped
 atomic cleanup command
@@ -94,7 +97,8 @@ migration/application-restart/backup/restore/deletion drill, legacy BYTEA
 upgrade, object restart recovery, SSE-KMS request and checksum quarantine
 evidence, parallel version allocation, idempotent retries, transactional
 rollback and restore, malicious/corrupt file rejection, safe-download controls,
-owner-scoped archive/restore/soft deletion, guarded purge, legal hold and
+byte-for-byte inactive and archived artifact downloads, relationship and
+owner isolation, owner-scoped archive/restore/soft deletion, guarded purge, legal hold and
 bounded audit maintenance. It also covers bounded operation metrics,
 log/metric redaction, correlation propagation, database/object-storage
 readiness and reconciliation signals.

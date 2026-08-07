@@ -28,6 +28,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.hasSize;
@@ -161,10 +163,190 @@ class DocumentFileControllerIntegrationTest {
     }
 
     @Test
+    void downloadExactHistoricArtifact_ShouldReturnBytesWithoutChangingStoredState()
+            throws Exception {
+        GeneratedDocument document = saveDocument();
+        byte[] historicContent = TestDocumentFiles.validDocx();
+        UUID historicArtifactId = createFile(
+                document.getId(), "historic.docx", historicContent);
+        UUID currentArtifactId = createFile(
+                document.getId(), "current.docx", TestDocumentFiles.validDocx());
+        assertFalse(fileRepository.findById(historicArtifactId).orElseThrow().isActive());
+        assertTrue(fileRepository.findById(currentArtifactId).orElseThrow().isActive());
+        Map<String, Object> before = retainedStateSnapshot();
+
+        byte[] actual = mockMvc.perform(get(
+                                "/api/v1/documents/{documentId}/artifacts/{artifactId}/download",
+                                document.getId(),
+                                historicArtifactId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_TYPE, DOCX_MIME_TYPE))
+                .andExpect(header().string(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"document-"
+                                + historicArtifactId + ".docx\""))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string(
+                        HttpHeaders.CACHE_CONTROL,
+                        "private, no-store, max-age=0"))
+                .andExpect(header().string(HttpHeaders.PRAGMA, "no-cache"))
+                .andExpect(header().longValue(
+                        HttpHeaders.CONTENT_LENGTH,
+                        historicContent.length))
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
+
+        assertArrayEquals(historicContent, actual);
+        assertEquals(before, retainedStateSnapshot());
+
+        byte[] legacyRouteActual = mockMvc.perform(get(
+                                "/api/v1/document-files/{id}/download",
+                                historicArtifactId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
+        assertArrayEquals(historicContent, legacyRouteActual);
+        assertEquals(before, retainedStateSnapshot());
+    }
+
+    @Test
+    void downloadExactArtifact_WhenParentArchived_ShouldRemainAvailableAndReadOnly()
+            throws Exception {
+        GeneratedDocument document = saveDocument();
+        byte[] content = TestDocumentFiles.validPdf();
+        UUID artifactId = createFile(document.getId(), "archived.pdf", content);
+        mockMvc.perform(patch("/api/v1/documents/{id}/archive", document.getId())
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.retentionState").value("ARCHIVED"));
+        Map<String, Object> before = retainedStateSnapshot();
+
+        byte[] actual = mockMvc.perform(get(
+                                "/api/v1/documents/{documentId}/artifacts/{artifactId}/download",
+                                document.getId(),
+                                artifactId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
+
+        assertArrayEquals(content, actual);
+        assertEquals(before, retainedStateSnapshot());
+    }
+
+    @Test
+    void downloadExactArtifact_ShouldDenyForeignOwnerAndMismatchedRelationshipUniformly()
+            throws Exception {
+        GeneratedDocument document = saveDocument();
+        GeneratedDocument unrelated = saveDocument();
+        UUID artifactId = createFile(
+                document.getId(), "cv.pdf", TestDocumentFiles.validPdf());
+        UUID missingArtifactId = UUID.randomUUID();
+
+        String mismatch = mockMvc.perform(get(
+                                "/api/v1/documents/{documentId}/artifacts/{artifactId}/download",
+                                unrelated.getId(),
+                                artifactId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isNotFound())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String foreign = mockMvc.perform(get(
+                                "/api/v1/documents/{documentId}/artifacts/{artifactId}/download",
+                                document.getId(),
+                                artifactId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "other-user"))
+                .andExpect(status().isNotFound())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String missing = mockMvc.perform(get(
+                                "/api/v1/documents/{documentId}/artifacts/{artifactId}/download",
+                                document.getId(),
+                                missingArtifactId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isNotFound())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode missingDenial = objectMapper.readTree(missing);
+        for (String denial : new String[] {mismatch, foreign}) {
+            JsonNode denied = objectMapper.readTree(denial);
+            assertEquals(missingDenial.path("status"), denied.path("status"));
+            assertEquals(missingDenial.path("message"), denied.path("message"));
+        }
+    }
+
+    @Test
+    void downloadExactArtifact_ShouldDenyUnavailableAndDeletedContent()
+            throws Exception {
+        GeneratedDocument unavailableDocument = saveDocument();
+        UUID unavailableArtifactId = createFile(
+                unavailableDocument.getId(), "unavailable.pdf", TestDocumentFiles.validPdf());
+        var unavailable = fileRepository.findById(unavailableArtifactId).orElseThrow();
+        unavailable.setStorageStatus(ObjectStorageStatus.UNAVAILABLE);
+        unavailable.setActive(false);
+        fileRepository.saveAndFlush(unavailable);
+
+        mockMvc.perform(get(
+                                "/api/v1/documents/{documentId}/artifacts/{artifactId}/download",
+                                unavailableDocument.getId(),
+                                unavailableArtifactId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isNotFound());
+
+        GeneratedDocument deletedDocument = saveDocument();
+        UUID deletedArtifactId = createFile(
+                deletedDocument.getId(), "deleted.pdf", TestDocumentFiles.validPdf());
+        mockMvc.perform(delete("/api/v1/documents/{id}", deletedDocument.getId())
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get(
+                                "/api/v1/documents/{documentId}/artifacts/{artifactId}/download",
+                                deletedDocument.getId(),
+                                deletedArtifactId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void downloadExactArtifact_ShouldRejectMalformedIdentifiersWithoutInternalDetails()
+            throws Exception {
+        mockMvc.perform(get(
+                                "/api/v1/documents/{documentId}/artifacts/{artifactId}/download",
+                                "not-a-document-uuid",
+                                "not-an-artifact-uuid")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message")
+                        .value("Request path contains a malformed identifier."));
+    }
+
+    @Test
     void downloadDocumentFile_WhenObjectIntegrityFails_ShouldReturn503AndQuarantineMetadata()
             throws Exception {
+        GeneratedDocument document = saveDocument();
         UUID fileId = createFile(
-                saveDocument().getId(),
+                document.getId(),
                 "cv.pdf",
                 TestDocumentFiles.validPdf());
         var metadata = fileRepository.findById(fileId).orElseThrow();
@@ -176,7 +358,10 @@ class DocumentFileControllerIntegrationTest {
                 PDF_MIME_TYPE,
                 com.jobseekercopilot.documentstore.storage.ObjectIntegrity.sha256(corrupt));
 
-        mockMvc.perform(get("/api/v1/document-files/{id}/download", fileId)
+        mockMvc.perform(get(
+                                "/api/v1/documents/{documentId}/artifacts/{artifactId}/download",
+                                document.getId(),
+                                fileId)
                         .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
                         .header(DocumentOwnerResolver.OWNER_HEADER, "user-123"))
                 .andExpect(status().isServiceUnavailable())
@@ -185,6 +370,7 @@ class DocumentFileControllerIntegrationTest {
 
         assertTrue(fileRepository.findById(fileId).orElseThrow().getStorageStatus()
                 == ObjectStorageStatus.UNAVAILABLE);
+        assertFalse(fileRepository.findById(fileId).orElseThrow().isActive());
     }
 
     @Test
@@ -528,6 +714,29 @@ class DocumentFileControllerIntegrationTest {
                 .title("Java Developer CV")
                 .content("Generated CV content...")
                 .build());
+    }
+
+    private Map<String, Object> retainedStateSnapshot() {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("documents", jdbcTemplate.queryForList("""
+                SELECT id, document_family_id, version, active, current_slot,
+                       lifecycle_state, retention_state, updated_at
+                FROM generated_documents
+                ORDER BY id
+                """));
+        snapshot.put("artifacts", jdbcTemplate.queryForList("""
+                SELECT id, generated_document_id, version, active, current_slot,
+                       storage_status, content_size, content_sha256, updated_at
+                FROM exported_document_files
+                ORDER BY id
+                """));
+        snapshot.put("lifecycleEvents", jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM document_lifecycle_events", Long.class));
+        snapshot.put("currentCommands", jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM document_current_commands", Long.class));
+        snapshot.put("storageOperations", jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM document_storage_operations", Long.class));
+        return snapshot;
     }
 
     private UUID createFile(UUID generatedDocumentId, String fileName, byte[] content) throws Exception {

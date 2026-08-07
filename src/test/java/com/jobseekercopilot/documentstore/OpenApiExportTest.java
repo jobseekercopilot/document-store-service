@@ -1,6 +1,7 @@
 package com.jobseekercopilot.documentstore;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterAll;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,7 +56,22 @@ class OpenApiExportTest {
                 .getContentAsString();
         var generated = objectMapper.readTree(specification);
 
-        assertEquals("3.0.0", generated.at("/info/version").asText());
+        assertEquals("3.1.0", generated.at("/info/version").asText());
+        assertEquals(
+                "downloadDocumentArtifact",
+                generated.at("/paths/~1api~1v1~1documents~1{generatedDocumentId}~1artifacts~1{artifactId}~1download/get/operationId")
+                        .asText());
+        var downloadHeaders = generated.at(
+                "/paths/~1api~1v1~1documents~1{generatedDocumentId}~1artifacts~1{artifactId}~1download/get/responses/200/headers");
+        for (String header : new String[] {
+                "Content-Disposition",
+                "X-Content-Type-Options",
+                "Cache-Control",
+                "Pragma",
+                "Content-Length"
+        }) {
+            assertFalse(downloadHeaders.path(header).isMissingNode());
+        }
         assertEquals(
                 "Proprietary and confidential",
                 generated.at("/info/license/name").asText());

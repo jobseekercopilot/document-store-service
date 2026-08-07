@@ -6,6 +6,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import com.jobseekercopilot.documentstore.storage.ObjectStorageException;
 
@@ -69,6 +70,17 @@ public class GlobalExceptionHandler {
         ErrorResponse error = ErrorResponse.builder()
                 .status(HttpStatus.BAD_REQUEST.value())
                 .message("Request body is malformed or contains an unsupported value.")
+                .timestamp(LocalDateTime.now())
+                .build();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleMalformedPathValue(
+            MethodArgumentTypeMismatchException ex) {
+        ErrorResponse error = ErrorResponse.builder()
+                .status(HttpStatus.BAD_REQUEST.value())
+                .message("Request path contains a malformed identifier.")
                 .timestamp(LocalDateTime.now())
                 .build();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);

@@ -8,12 +8,14 @@ application. Document approval and retention are separate state machines.
 
 - A create request always produces a `DRAFT`. A draft is never current and
   cannot be referenced by an application.
-- `PATCH /api/v1/documents/{id}/approve` records explicit approval and selects
-  that immutable version as the current version in its family.
+- `PATCH /api/v1/documents/{id}/approve` records explicit approval only. It
+  never changes the family's current pointer.
 - A regenerated or replacement document supplies `documentFamilyId`. Document
   Store allocates the next version under an owner-scoped family lock.
-- Approval of a new version changes `current`; it does not mutate or delete an
-  older version.
+- An authenticated owner explicitly moves current with
+  `PATCH /api/v1/documents/families/{familyId}/current`, an expected-pointer
+  assertion and a required `Idempotency-Key`. The command may select an older
+  approved, available version and never creates or copies a version.
 - `GET /api/v1/documents/{id}/reference` returns an owner-scoped descriptor only
   for an approved and `AVAILABLE` version. It excludes document content.
 - Application Tracker copies the canonical descriptor into its
@@ -22,6 +24,12 @@ application. Document approval and retention are separate state machines.
 
 `active` remains in the API as a deprecated alias for `current` while existing
 consumers migrate. Create requests cannot set it to true.
+
+`GET /api/v1/documents/families` pages content-free family summaries.
+`GET /api/v1/documents/families/{familyId}` returns trusted newest-first
+versions and exact safe artifact manifests. Neither endpoint exposes document
+content, original filenames, content digests, evidence payloads or scanner
+details.
 
 ## Retention lifecycle
 

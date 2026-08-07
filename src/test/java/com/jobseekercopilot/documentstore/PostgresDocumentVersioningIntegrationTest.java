@@ -8,15 +8,20 @@ import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
 import com.jobseekercopilot.documentstore.dto.DocumentFileResponse;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
 import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
+import com.jobseekercopilot.documentstore.dto.ExpectedCurrentState;
+import com.jobseekercopilot.documentstore.dto.SelectFamilyCurrentRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
+import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.repository.DocumentStorageOperationRepository;
+import com.jobseekercopilot.documentstore.repository.DocumentCurrentCommandRepository;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import com.jobseekercopilot.documentstore.service.DocumentFileService;
 import com.jobseekercopilot.documentstore.service.DocumentFileValidator;
 import com.jobseekercopilot.documentstore.service.GeneratedDocumentService;
+import com.jobseekercopilot.documentstore.service.DocumentFamilyHistoryService;
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -74,6 +79,9 @@ class PostgresDocumentVersioningIntegrationTest {
     private GeneratedDocumentService documentService;
 
     @Autowired
+    private DocumentFamilyHistoryService familyHistoryService;
+
+    @Autowired
     private DocumentFileService fileService;
 
     @Autowired
@@ -86,6 +94,9 @@ class PostgresDocumentVersioningIntegrationTest {
     private DocumentStorageOperationRepository storageOperationRepository;
 
     @Autowired
+    private DocumentCurrentCommandRepository currentCommandRepository;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @MockBean
@@ -93,13 +104,14 @@ class PostgresDocumentVersioningIntegrationTest {
 
     @BeforeEach
     void cleanDatabase() {
+        currentCommandRepository.deleteAllInBatch();
         fileRepository.deleteAllInBatch();
         storageOperationRepository.deleteAllInBatch();
         documentRepository.deleteAllInBatch();
     }
 
     @Test
-    void concurrentDocumentCreatesAllocateUniqueFamilyVersionsAndApprovalSelectsOneCurrentVersion()
+    void concurrentDocumentCreatesAllocateUniqueFamilyVersionsAndApprovalLeavesCurrentUnset()
             throws Exception {
         List<GeneratedDocumentResponse> results = concurrently(
                 8,
@@ -123,9 +135,7 @@ class PostgresDocumentVersioningIntegrationTest {
         assertThat(documentRepository
                         .findByDocumentFamilyIdAndActiveTrueAndUserId(
                                 DOCUMENT_FAMILY, OWNER))
-                .singleElement()
-                .extracting(document -> document.getVersion())
-                .isEqualTo(8);
+                .isEmpty();
     }
 
     @Test
@@ -143,6 +153,52 @@ class PostgresDocumentVersioningIntegrationTest {
                 .singleElement()
                 .extracting(document -> document.getVersion())
                 .isEqualTo(1);
+    }
+
+    @Test
+    void concurrentCurrentCommandsWithOneExpectedPointerAllowOnlyOneWinner()
+            throws Exception {
+        List<GeneratedDocumentResponse> versions = new ArrayList<>();
+        for (int index = 1; index <= 3; index++) {
+            GeneratedDocumentResponse version = documentService.createDocument(
+                    OWNER,
+                    documentRequest("current-content-" + index),
+                    "current-document-" + index);
+            versions.add(documentService.approveDocumentVersion(
+                    OWNER, version.getId()));
+        }
+        familyHistoryService.selectCurrent(
+                OWNER,
+                DOCUMENT_FAMILY,
+                new SelectFamilyCurrentRequest(
+                        versions.get(0).getId(),
+                        ExpectedCurrentState.NONE,
+                        null),
+                "initial-current");
+
+        List<Boolean> outcomes = concurrently(2, index -> {
+            try {
+                familyHistoryService.selectCurrent(
+                        OWNER,
+                        DOCUMENT_FAMILY,
+                        new SelectFamilyCurrentRequest(
+                                versions.get(index + 1).getId(),
+                                ExpectedCurrentState.SELECTED,
+                                versions.get(0).getId()),
+                        "competing-current-" + index);
+                return true;
+            } catch (OperationConflictException exception) {
+                return false;
+            }
+        });
+
+        assertThat(outcomes).containsExactlyInAnyOrder(true, false);
+        assertThat(documentRepository
+                        .findByDocumentFamilyIdAndActiveTrueAndUserId(
+                                DOCUMENT_FAMILY, OWNER))
+                .singleElement()
+                .extracting(GeneratedDocument::getId)
+                .isIn(versions.get(1).getId(), versions.get(2).getId());
     }
 
     @Test
@@ -235,6 +291,7 @@ class PostgresDocumentVersioningIntegrationTest {
         GeneratedDocumentResponse current = documentService.createDocument(
                 OWNER, documentRequest("stable-current"), "stable-operation");
         current = documentService.approveDocumentVersion(OWNER, current.getId());
+        current = documentService.selectCurrentDocumentVersion(OWNER, current.getId());
         UUID currentId = current.getId();
         CreateDocumentRequest invalid = documentRequest("invalid-next");
         invalid.setTitle(null);

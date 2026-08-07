@@ -5,11 +5,16 @@ import com.jobseekercopilot.documentstore.dto.DocumentReferenceResponse;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
 import com.jobseekercopilot.documentstore.dto.DocumentLifecycleEventResponse;
 import com.jobseekercopilot.documentstore.dto.LegalHoldRequest;
+import com.jobseekercopilot.documentstore.dto.DocumentFamilyCurrentResponse;
+import com.jobseekercopilot.documentstore.dto.DocumentFamilyHistoryResponse;
+import com.jobseekercopilot.documentstore.dto.DocumentFamilyPageResponse;
+import com.jobseekercopilot.documentstore.dto.SelectFamilyCurrentRequest;
 import com.jobseekercopilot.documentstore.dto.ApplicationWithdrawalCleanupRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.service.GeneratedDocumentService;
 import com.jobseekercopilot.documentstore.service.DocumentRetentionService;
+import com.jobseekercopilot.documentstore.service.DocumentFamilyHistoryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -30,6 +35,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
 import java.util.UUID;
@@ -42,7 +48,59 @@ public class GeneratedDocumentController {
 
     private final GeneratedDocumentService service;
     private final DocumentRetentionService retentionService;
+    private final DocumentFamilyHistoryService familyHistoryService;
     private final DocumentOwnerResolver ownerResolver;
+
+    @GetMapping("/families")
+    @Operation(
+            summary = "Page owner-scoped document families",
+            description = "Returns content-free family summaries with trusted server-owned versions and explicit current state")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
+    public ResponseEntity<DocumentFamilyPageResponse> listDocumentFamilies(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(familyHistoryService.listFamilies(
+                ownerId, page, size));
+    }
+
+    @GetMapping("/families/{documentFamilyId}")
+    @Operation(
+            summary = "Get complete document-family history",
+            description = "Returns newest-first content-free versions and exact safe artifact manifests")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
+    public ResponseEntity<DocumentFamilyHistoryResponse> getDocumentFamilyHistory(
+            @PathVariable UUID documentFamilyId,
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(familyHistoryService.getFamilyHistory(
+                ownerId, documentFamilyId));
+    }
+
+    @PatchMapping("/families/{documentFamilyId}/current")
+    @Operation(
+            summary = "Explicitly select a document-family current version",
+            description = "Moves only the family pointer using an exact expected pointer and a replay-safe command key")
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "serviceToken")
+    public ResponseEntity<DocumentFamilyCurrentResponse> selectFamilyCurrent(
+            @PathVariable UUID documentFamilyId,
+            @Valid @RequestBody SelectFamilyCurrentRequest request,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestHeader(value = DocumentOwnerResolver.OWNER_HEADER, required = false)
+            String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        return ResponseEntity.ok(familyHistoryService.selectCurrent(
+                ownerId, documentFamilyId, request, idempotencyKey));
+    }
 
     @PostMapping
     @Operation(summary = "Create a document", description = "Stores a generated document (CV or cover letter)")
@@ -288,7 +346,9 @@ public class GeneratedDocumentController {
     }
 
     @PatchMapping("/{documentId}/approve")
-    @Operation(summary = "Explicitly approve a draft and select it as current")
+    @Operation(
+            summary = "Explicitly approve a draft",
+            description = "Approval changes lifecycle only and never changes the family current pointer")
     @SecurityRequirement(name = "bearerAuth")
     @SecurityRequirement(name = "serviceToken")
     public ResponseEntity<GeneratedDocumentResponse> approveDocumentVersion(
@@ -301,7 +361,10 @@ public class GeneratedDocumentController {
     }
 
     @PatchMapping("/{documentId}/current")
-    @Operation(summary = "Select an approved version as the current family version")
+    @Operation(
+            summary = "Legacy select-current command",
+            description = "Use /families/{documentFamilyId}/current for concurrency and idempotency protection.",
+            deprecated = true)
     @SecurityRequirement(name = "bearerAuth")
     @SecurityRequirement(name = "serviceToken")
     public ResponseEntity<GeneratedDocumentResponse> selectCurrentDocumentVersion(

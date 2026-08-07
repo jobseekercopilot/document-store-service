@@ -66,7 +66,7 @@ class PostgresStorageRecoveryIntegrationTest {
         // The bytes remain recoverable as LEGACY_DATABASE until the startup
         // migrator has durably copied and verified the external object.
         Flyway flyway = flyway(POSTGRES.getJdbcUrl());
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(7);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(8);
         flyway.validate();
         try (Connection connection = primaryConnection()) {
             assertThatThrownBy(() -> markLegacyAvailableWithoutObject(connection, fileId))

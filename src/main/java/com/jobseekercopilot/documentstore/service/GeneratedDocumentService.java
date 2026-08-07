@@ -269,9 +269,7 @@ public class GeneratedDocumentService {
             throw new OperationConflictException(
                     "Generated document provenance is required before approval.");
         }
-        deactivateCurrentVersions(ownerId, document.getDocumentFamilyId());
         document.setLifecycleState(DocumentLifecycleState.APPROVED);
-        document.setActive(true);
         document.setApprovedAt(LocalDateTime.now());
         document.setApprovedBy(ownerId);
         if (document.getContentSha256() == null) {
@@ -478,7 +476,7 @@ public class GeneratedDocumentService {
     private void requireAvailable(GeneratedDocument document) {
         if (document.getRetentionState() != DocumentRetentionState.AVAILABLE) {
             throw new OperationConflictException(
-                    "Archived or deleted documents cannot become current or approved.");
+                    "Archived or deleted documents cannot become current or be approved.");
         }
     }
 

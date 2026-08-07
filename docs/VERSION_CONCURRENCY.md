@@ -65,6 +65,13 @@ The following mutation APIs accept the optional `Idempotency-Key` header:
 - `POST /api/v1/document-files`
 - `POST /api/v1/documents/{generatedDocumentId}/files/upload`
 
+`PATCH /api/v1/documents/families/{familyId}/current` requires the header. Its
+body names the exact target and either asserts that no current version exists
+or supplies the exact current document ID observed by the caller. The service
+locks the family, rejects a stale assertion with `409 Conflict`, and persists a
+replay record so a same-key/same-command retry returns the original result
+without moving the pointer again.
+
 Keys are opaque, case-sensitive, 1-128 characters, and limited to letters,
 digits, `.`, `_`, `:`, and `-`. A caller must generate one stable key for one
 logical operation and reuse it only when retrying that operation.

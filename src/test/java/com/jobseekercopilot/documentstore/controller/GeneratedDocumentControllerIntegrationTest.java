@@ -9,6 +9,13 @@ import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.dto.ValidatedClaimLedger;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
+import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
+import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
+import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
+import com.jobseekercopilot.documentstore.entity.FileSource;
+import com.jobseekercopilot.documentstore.entity.FileType;
+import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
+import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter;
@@ -49,6 +56,9 @@ class GeneratedDocumentControllerIntegrationTest {
 
     @Autowired
     private GeneratedDocumentRepository repository;
+
+    @Autowired
+    private ExportedDocumentFileRepository fileRepository;
 
     @Test
     void createDocument_ShouldReturn201() throws Exception {
@@ -340,6 +350,172 @@ class GeneratedDocumentControllerIntegrationTest {
                         .header(DocumentOwnerResolver.OWNER_HEADER, "user-test"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(2)));
+    }
+
+    @Test
+    void familyHistoryIsContentFreeNewestFirstAndUsesExactArtifactManifest()
+            throws Exception {
+        UUID familyId = UUID.randomUUID();
+        GeneratedDocument first = repository.saveAndFlush(GeneratedDocument.builder()
+                .userId("history-owner")
+                .jobId("job-history")
+                .documentFamilyId(familyId)
+                .documentType(DocumentType.CV)
+                .title("First CV")
+                .content("secret first content")
+                .contentSha256("a".repeat(64))
+                .version(1)
+                .lifecycleState(DocumentLifecycleState.APPROVED)
+                .approvedAt(java.time.LocalDateTime.now())
+                .approvedBy("history-owner")
+                .originalFilename("private-original-name.docx")
+                .sourceType(DocumentSourceType.UPLOADED)
+                .build());
+        GeneratedDocument second = repository.saveAndFlush(GeneratedDocument.builder()
+                .userId("history-owner")
+                .jobId("job-history")
+                .documentFamilyId(familyId)
+                .documentType(DocumentType.CV)
+                .title("Second CV")
+                .content("secret second content")
+                .contentSha256("b".repeat(64))
+                .version(2)
+                .sourceType(DocumentSourceType.UPLOADED)
+                .build());
+        ExportedDocumentFile artifact = fileRepository.saveAndFlush(
+                ExportedDocumentFile.builder()
+                        .generatedDocumentId(first.getId())
+                        .ownerId("history-owner")
+                        .fileType(FileType.DOCX)
+                        .fileName("private-original-name.docx")
+                        .mimeType("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                        .source(FileSource.USER_UPLOADED)
+                        .active(true)
+                        .version(1)
+                        .storageKey("history/" + UUID.randomUUID())
+                        .contentSize(1234)
+                        .contentSha256("c".repeat(64))
+                        .storageStatus(ObjectStorageStatus.AVAILABLE)
+                        .build());
+
+        mockMvc.perform(get("/api/v1/documents/families/{familyId}", familyId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "history-owner"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.documentFamilyId").value(familyId.toString()))
+                .andExpect(jsonPath("$.versions[0].documentId").value(second.getId().toString()))
+                .andExpect(jsonPath("$.versions[0].version").value(2))
+                .andExpect(jsonPath("$.versions[1].version").value(1))
+                .andExpect(jsonPath("$.versions[1].artifacts[0].artifactId")
+                        .value(artifact.getId().toString()))
+                .andExpect(jsonPath("$.versions[1].artifacts[0].role").value("ORIGINAL"))
+                .andExpect(jsonPath("$.versions[1].artifacts[0].format").value("DOCX"))
+                .andExpect(jsonPath("$.versions[1].artifacts[0].availability").value("AVAILABLE"))
+                .andExpect(jsonPath("$.versions[1].artifacts[0].size").value(1234))
+                .andExpect(jsonPath("$.versions[1].content").doesNotExist())
+                .andExpect(jsonPath("$.versions[1].contentSha256").doesNotExist())
+                .andExpect(jsonPath("$.versions[1].originalFilename").doesNotExist())
+                .andExpect(jsonPath("$.versions[1].artifacts[0].fileName").doesNotExist())
+                .andExpect(jsonPath("$.versions[1].artifacts[0].contentSha256").doesNotExist());
+
+        mockMvc.perform(get("/api/v1/documents/families/{familyId}", familyId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "another-owner"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void approvalDoesNotMoveCurrentAndFamilyCommandIsConcurrencyProtectedAndReplaySafe()
+            throws Exception {
+        UUID familyId = UUID.randomUUID();
+        GeneratedDocument first = repository.saveAndFlush(GeneratedDocument.builder()
+                .userId("current-owner")
+                .jobId("job-current")
+                .documentFamilyId(familyId)
+                .documentType(DocumentType.CV)
+                .title("First CV")
+                .content("first")
+                .version(1)
+                .sourceType(DocumentSourceType.UPLOADED)
+                .build());
+        GeneratedDocument second = repository.saveAndFlush(GeneratedDocument.builder()
+                .userId("current-owner")
+                .jobId("job-current")
+                .documentFamilyId(familyId)
+                .documentType(DocumentType.CV)
+                .title("Second CV")
+                .content("second")
+                .version(2)
+                .sourceType(DocumentSourceType.UPLOADED)
+                .build());
+
+        for (UUID documentId : List.of(first.getId(), second.getId())) {
+            mockMvc.perform(patch("/api/v1/documents/{id}/approve", documentId)
+                            .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                            .header(DocumentOwnerResolver.OWNER_HEADER, "current-owner"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.current").value(false));
+        }
+
+        String selectFirst = """
+                {"documentId":"%s","expectedCurrentState":"NONE"}
+                """.formatted(first.getId());
+        String originalResponse = mockMvc.perform(patch(
+                        "/api/v1/documents/families/{familyId}/current", familyId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "current-owner")
+                        .header("Idempotency-Key", "select-first-current")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(selectFirst))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentDocumentId").value(first.getId().toString()))
+                .andExpect(jsonPath("$.currentVersion").value(1))
+                .andReturn().getResponse().getContentAsString();
+        String replayResponse = mockMvc.perform(patch(
+                        "/api/v1/documents/families/{familyId}/current", familyId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "current-owner")
+                        .header("Idempotency-Key", "select-first-current")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(selectFirst))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        org.junit.jupiter.api.Assertions.assertEquals(
+                objectMapper.readTree(originalResponse).path("commandId").asText(),
+                objectMapper.readTree(replayResponse).path("commandId").asText());
+
+        String stale = """
+                {"documentId":"%s","expectedCurrentState":"NONE"}
+                """.formatted(second.getId());
+        mockMvc.perform(patch("/api/v1/documents/families/{familyId}/current", familyId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "current-owner")
+                        .header("Idempotency-Key", "stale-current")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(stale))
+                .andExpect(status().isConflict());
+
+        String selectSecond = """
+                {"documentId":"%s","expectedCurrentState":"SELECTED","expectedCurrentDocumentId":"%s"}
+                """.formatted(second.getId(), first.getId());
+        mockMvc.perform(patch("/api/v1/documents/families/{familyId}/current", familyId)
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "current-owner")
+                        .header("Idempotency-Key", "select-second-current")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(selectSecond))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentDocumentId").value(second.getId().toString()))
+                .andExpect(jsonPath("$.currentVersion").value(2));
+
+        mockMvc.perform(get("/api/v1/documents/families?page=0&size=1")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER, PRODUCER_TOKEN)
+                        .header(DocumentOwnerResolver.OWNER_HEADER, "current-owner"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items", hasSize(1)))
+                .andExpect(jsonPath("$.items[0].currentDocumentId")
+                        .value(second.getId().toString()))
+                .andExpect(jsonPath("$.items[0].versionCount").value(2));
     }
 
     @Test

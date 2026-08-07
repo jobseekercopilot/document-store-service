@@ -94,9 +94,11 @@ class DocumentLifecycleIntegrationTest {
         approve(firstId)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.lifecycleState").value("APPROVED"))
-                .andExpect(jsonPath("$.current").value(true))
+                .andExpect(jsonPath("$.current").value(false))
                 .andExpect(jsonPath("$.approvedAt", endsWith("Z")))
                 .andExpect(jsonPath("$.approvedBy").value(OWNER));
+        selectCurrent(familyId, firstId, "NONE", null, "select-version-one")
+                .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/v1/documents/{id}/reference", firstId)
                         .headers(serviceHeaders(OWNER)))
@@ -133,7 +135,19 @@ class DocumentLifecycleIntegrationTest {
 
         approve(secondId)
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.current").value(false));
+
+        mockMvc.perform(get("/api/v1/documents/{id}/reference", firstId)
+                        .headers(serviceHeaders(OWNER)))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.current").value(true));
+        selectCurrent(
+                familyId,
+                secondId,
+                "SELECTED",
+                firstId,
+                "select-version-two")
+                .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/v1/documents/{id}/reference", firstId)
                         .headers(serviceHeaders(OWNER)))
@@ -187,6 +201,26 @@ class DocumentLifecycleIntegrationTest {
             throws Exception {
         return mockMvc.perform(patch("/api/v1/documents/{id}/approve", id)
                 .headers(serviceHeaders(OWNER)));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions selectCurrent(
+            UUID familyId,
+            UUID documentId,
+            String expectedState,
+            UUID expectedCurrentId,
+            String idempotencyKey) throws Exception {
+        String expectedId = expectedCurrentId == null
+                ? ""
+                : ",\"expectedCurrentDocumentId\":\"" + expectedCurrentId + "\"";
+        String body = "{\"documentId\":\"" + documentId
+                + "\",\"expectedCurrentState\":\"" + expectedState + "\""
+                + expectedId + "}";
+        return mockMvc.perform(patch(
+                        "/api/v1/documents/families/{familyId}/current", familyId)
+                .headers(serviceHeaders(OWNER))
+                .header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body));
     }
 
     private CreateDocumentRequest documentRequest(

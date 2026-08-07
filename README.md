@@ -43,10 +43,13 @@ remain required.
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-2.3.0 contract. It adds immutable profile/evidence-snapshot provenance,
-validated claim-ledger identity, grounding state and parent-version linkage to
-each document version and owner-scoped reference. It retains the producer-only,
-owner-scoped atomic cleanup command
+3.0.0 contract. It includes content-free paged family summaries, newest-first
+server-numbered history, safe exact-artifact manifests and a concurrency- and
+idempotency-protected explicit current-pointer command. Approval and current
+selection are independent. The contract also retains immutable
+profile/evidence-snapshot provenance, validated claim-ledger identity,
+grounding state, parent-version linkage and the producer-only owner-scoped
+atomic cleanup command
 used by Application Tracker's durable generated-withdrawal workflow. Replaying
 the same exact document set is safe, and a failure rolls back the entire Store
 transaction. Maven verification fails when the running contract drifts from

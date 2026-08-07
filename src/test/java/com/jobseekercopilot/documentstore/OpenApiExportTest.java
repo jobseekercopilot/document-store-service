@@ -55,7 +55,7 @@ class OpenApiExportTest {
                 .getContentAsString();
         var generated = objectMapper.readTree(specification);
 
-        assertEquals("2.3.0", generated.at("/info/version").asText());
+        assertEquals("3.0.0", generated.at("/info/version").asText());
         assertEquals(
                 "Proprietary and confidential",
                 generated.at("/info/license/name").asText());

@@ -57,7 +57,20 @@ class OpenApiExportTest {
                 .getContentAsString();
         var generated = objectMapper.readTree(specification);
 
-        assertEquals("3.3.0", generated.at("/info/version").asText());
+        assertEquals("3.4.0", generated.at("/info/version").asText());
+        assertTrue(generated.at(
+                "/paths/~1api~1v1~1document-activity/get").isObject());
+        var activity = generated.at(
+                "/components/schemas/DocumentActivityEventResponse/properties");
+        assertTrue(activity.path("eventType").isObject());
+        assertTrue(activity.path("documentFamilyId").isObject());
+        assertTrue(activity.path("version").isObject());
+        assertTrue(activity.path("occurredAt").isObject());
+        assertTrue(activity.path("content").isMissingNode());
+        assertTrue(activity.path("fileName").isMissingNode());
+        assertTrue(activity.path("contentSha256").isMissingNode());
+        assertTrue(activity.path("scannerDetails").isMissingNode());
+        assertTrue(activity.path("notes").isMissingNode());
         assertTrue(generated.at(
                         "/components/schemas/GeneratedDocumentResponse/properties")
                 .has("purgedAt"));

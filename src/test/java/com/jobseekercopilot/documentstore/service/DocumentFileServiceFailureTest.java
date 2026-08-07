@@ -73,7 +73,8 @@ class DocumentFileServiceFailureTest {
                 validator,
                 locks,
                 new DocumentStoreMetrics(new SimpleMeterRegistry()),
-                journal);
+                journal,
+                mock(DocumentActivityService.class));
         var request = CreateDocumentFileRequest.builder()
                 .generatedDocumentId(documentId)
                 .fileType(FileType.PDF)

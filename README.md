@@ -43,7 +43,7 @@ remain required.
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-3.3.0 contract. It includes content-free paged family summaries, newest-first
+3.4.0 contract. It includes content-free paged family summaries, newest-first
 server-numbered history, safe exact-artifact manifests and a concurrency- and
 idempotency-protected explicit current-pointer command. Approval and current
 selection are independent. Exact retained artifacts can be downloaded through
@@ -62,6 +62,12 @@ Version 3.3.0 also adds a no-store account export. Coordinated account deletion
 uses a separate internal lifecycle-token route to recoverably delete owned
 documents while retaining legal-held records; irreversible production purge
 remains governed by the independent DOC-09 deployment gate.
+
+Version 3.4.0 adds a reader-authorized, owner-scoped, content-free document
+activity feed for version creation, successful download, current-version
+changes, archive and restore. Command replays and state-preserving no-ops do not
+create duplicate activity, and the activity rows follow the approved 365-day
+lifecycle-audit retention policy.
 
 The identity sources, least-privilege service roles, authorization matrix,
 stable denial rules and deployment dependencies are defined in

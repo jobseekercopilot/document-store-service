@@ -3,6 +3,7 @@ package com.jobseekercopilot.documentstore.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mock;
 
 import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
@@ -40,7 +41,8 @@ class GeneratedDocumentObservabilityTest {
                 repository,
                 retentionService,
                 operationLock,
-                new DocumentStoreMetrics(registry));
+                new DocumentStoreMetrics(registry),
+                mock(DocumentActivityService.class));
     }
 
     @Test

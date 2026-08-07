@@ -5,8 +5,9 @@ import com.jobseekercopilot.documentstore.dto.DocumentLifecycleEventResponse;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
 import com.jobseekercopilot.documentstore.dto.ApplicationWithdrawalCleanupRequest;
 import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
-import com.jobseekercopilot.documentstore.entity.DocumentLifecycleAction;
+import com.jobseekercopilot.documentstore.entity.DocumentActivityType;
 import com.jobseekercopilot.documentstore.entity.DocumentApplicationWorkflowCommand;
+import com.jobseekercopilot.documentstore.entity.DocumentLifecycleAction;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleEvent;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
@@ -50,6 +51,7 @@ public class DocumentRetentionService {
     private final DocumentFileLifecycleService fileLifecycleService;
     private final DocumentOperationLock operationLock;
     private final DocumentRetentionProperties properties;
+    private final DocumentActivityService activityService;
 
     @Transactional
     public GeneratedDocumentResponse archive(String ownerId, UUID documentId, String actorId) {
@@ -77,6 +79,11 @@ public class DocumentRetentionService {
         document.setArchivedBy(actor(actorId));
         clearDeletion(document);
         documentRepository.saveAndFlush(document);
+        activityService.record(
+                DocumentActivityType.DOCUMENT_VERSION_ARCHIVED,
+                document,
+                "ARCHIVED",
+                now);
         record(document, DocumentLifecycleAction.ARCHIVED, previous, actorId, now);
         log.info("Document archived documentType={} version={}",
                 document.getDocumentType(), document.getVersion());
@@ -111,6 +118,11 @@ public class DocumentRetentionService {
         document.setArchivedBy(null);
         clearDeletion(document);
         documentRepository.saveAndFlush(document);
+        activityService.record(
+                DocumentActivityType.DOCUMENT_VERSION_RESTORED,
+                document,
+                "RESTORED_FROM_" + previous.name(),
+                now);
         record(document, DocumentLifecycleAction.RESTORED, previous, actorId, now);
         log.info("Document restored documentType={} version={}",
                 document.getDocumentType(), document.getVersion());

@@ -11,6 +11,7 @@ import com.jobseekercopilot.documentstore.dto.DocumentVersionHistoryItem;
 import com.jobseekercopilot.documentstore.dto.DocumentTombstoneAssociationResponse;
 import com.jobseekercopilot.documentstore.dto.ExpectedCurrentState;
 import com.jobseekercopilot.documentstore.dto.SelectFamilyCurrentRequest;
+import com.jobseekercopilot.documentstore.entity.DocumentActivityType;
 import com.jobseekercopilot.documentstore.entity.DocumentCurrentCommand;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
@@ -50,6 +51,7 @@ public class DocumentFamilyHistoryService {
             tombstoneAssociationRepository;
     private final DocumentOperationLock operationLock;
     private final DocumentStoreMetrics metrics;
+    private final DocumentActivityService activityService;
 
     @Transactional(readOnly = true)
     public DocumentFamilyPageResponse listFamilies(String ownerId, int page, int size) {
@@ -179,11 +181,22 @@ public class DocumentFamilyHistoryService {
         requireExpectedCurrent(request, actualCurrent);
         requireEligible(requested);
 
-        if (actualCurrent == null || !actualCurrent.getId().equals(requested.getId())) {
+        boolean changed = actualCurrent == null
+                || !actualCurrent.getId().equals(requested.getId());
+        if (changed) {
             currentVersions.forEach(current -> current.setActive(false));
             documentRepository.saveAllAndFlush(currentVersions);
             requested.setActive(true);
             requested = documentRepository.saveAndFlush(requested);
+            activityService.recordOnce(
+                    "current:" + OperationFingerprint.sha256(
+                            ownerId, idempotencyKey),
+                    DocumentActivityType.DOCUMENT_CURRENT_VERSION_CHANGED,
+                    requested,
+                    actualCurrent == null
+                            ? "FIRST_CURRENT_SELECTED"
+                            : "CURRENT_CHANGED",
+                    LocalDateTime.now());
         }
 
         DocumentCurrentCommand command = currentCommandRepository.saveAndFlush(

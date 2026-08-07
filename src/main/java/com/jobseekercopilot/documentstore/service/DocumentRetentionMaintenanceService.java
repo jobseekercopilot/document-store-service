@@ -2,6 +2,7 @@ package com.jobseekercopilot.documentstore.service;
 
 import com.jobseekercopilot.documentstore.config.DocumentRetentionProperties;
 import com.jobseekercopilot.documentstore.entity.StorageOperationState;
+import com.jobseekercopilot.documentstore.repository.DocumentActivityEventRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentLifecycleEventRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentStorageOperationRepository;
 import java.time.LocalDateTime;
@@ -17,6 +18,7 @@ public class DocumentRetentionMaintenanceService {
 
     private final DocumentStorageOperationRepository operationRepository;
     private final DocumentLifecycleEventRepository eventRepository;
+    private final DocumentActivityEventRepository activityEventRepository;
     private final DocumentRetentionProperties properties;
 
     @Transactional
@@ -34,9 +36,15 @@ public class DocumentRetentionMaintenanceService {
         var lifecycleEvents =
                 eventRepository.findByRetentionExpiresAtBeforeOrderByRetentionExpiresAtAsc(
                         now, batch);
+        var activityEvents = activityEventRepository
+                .findByRetentionExpiresAtBeforeOrderByRetentionExpiresAtAsc(
+                        now, batch);
         operationRepository.deleteAllInBatch(completedOperations);
         eventRepository.deleteAllInBatch(lifecycleEvents);
+        activityEventRepository.deleteAllInBatch(activityEvents);
         return new DocumentRetentionMaintenanceReport(
-                completedOperations.size(), lifecycleEvents.size());
+                completedOperations.size(),
+                lifecycleEvents.size(),
+                activityEvents.size());
     }
 }

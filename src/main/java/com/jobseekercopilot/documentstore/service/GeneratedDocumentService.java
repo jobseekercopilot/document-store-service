@@ -58,6 +58,9 @@ public class GeneratedDocumentService {
             CreateDocumentRequest request,
             String requestedOperationKey) {
         String operationKey = IdempotencyKeys.validate(requestedOperationKey);
+        if (request.getTitle() == null || request.getTitle().isBlank()) {
+            throw new IllegalArgumentException("Document title is required.");
+        }
         String applicationId = blankToNull(request.getApplicationId());
         if (Boolean.TRUE.equals(request.getActive())) {
             throw new IllegalArgumentException(

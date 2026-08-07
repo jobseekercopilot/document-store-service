@@ -57,7 +57,7 @@ class OpenApiExportTest {
                 .getContentAsString();
         var generated = objectMapper.readTree(specification);
 
-        assertEquals("3.2.0", generated.at("/info/version").asText());
+        assertEquals("3.3.0", generated.at("/info/version").asText());
         assertTrue(generated.at(
                         "/components/schemas/GeneratedDocumentResponse/properties")
                 .has("purgedAt"));

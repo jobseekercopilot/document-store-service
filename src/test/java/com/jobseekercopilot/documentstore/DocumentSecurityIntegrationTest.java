@@ -31,6 +31,8 @@ import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
 import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
+import com.jobseekercopilot.documentstore.service.DocumentAccountLifecycleService;
+import com.jobseekercopilot.documentstore.dto.AccountDocumentDeletionResponse;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Base64;
 import java.util.List;
@@ -42,6 +44,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
@@ -49,6 +52,8 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest(properties = "environment-data.enabled=true")
 @AutoConfigureMockMvc
@@ -93,6 +98,9 @@ class DocumentSecurityIntegrationTest {
     @Autowired
     private MeterRegistry meterRegistry;
 
+    @MockBean
+    private DocumentAccountLifecycleService accountLifecycleService;
+
     @BeforeEach
     void cleanDatabase() {
         fileRepository.deleteAll();
@@ -127,6 +135,32 @@ class DocumentSecurityIntegrationTest {
                 .andExpect(status().isNotFound());
 
         assertTrue(documentRepository.findByUserId("victim").isEmpty());
+    }
+
+    @Test
+    void accountLifecycleTokensAreConfinedToRecoverableDeletion() throws Exception {
+        when(accountLifecycleService.recoverablyDelete(
+                        "lifecycle-owner", "operation-123"))
+                .thenReturn(new AccountDocumentDeletionResponse(1, 0, 0, 0));
+        String lifecycleToken = JWKS.accountLifecycleToken(
+                "lifecycle-owner", "operation-123");
+
+        mockMvc.perform(post("/internal/account-lifecycle/recoverable-delete")
+                        .header(HttpHeaders.AUTHORIZATION,
+                                "Bearer " + JWKS.validToken("lifecycle-owner")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/documents/account-export")
+                        .header(HttpHeaders.AUTHORIZATION,
+                                "Bearer " + lifecycleToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/internal/account-lifecycle/recoverable-delete")
+                        .header(HttpHeaders.AUTHORIZATION,
+                                "Bearer " + lifecycleToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recoverablyDeleted").value(1));
+
+        verify(accountLifecycleService).recoverablyDelete(
+                "lifecycle-owner", "operation-123");
     }
 
     @Test

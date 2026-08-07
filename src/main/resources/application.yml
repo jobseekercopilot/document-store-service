@@ -104,6 +104,12 @@ document-store:
       retention-admin-token: ${DOCUMENT_STORE_RETENTION_ADMIN_TOKEN:}
     environment-data-token: ${ENVIRONMENT_DATA_TOKEN:}
 
+services:
+  application-tracker-service:
+    base-url: ${APPLICATION_TRACKER_SERVICE_URL:http://application-tracker-service:8085}
+    reader-token: ${APPLICATION_TRACKER_READER_TOKEN:}
+    producer-token: ${APPLICATION_TRACKER_PRODUCER_TOKEN:}
+
 logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{correlationId}] [%X{serviceName}] [%thread] %logger{36} - %msg%n"

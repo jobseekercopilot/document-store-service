@@ -58,6 +58,9 @@ public class GeneratedDocumentService {
             CreateDocumentRequest request,
             String requestedOperationKey) {
         String operationKey = IdempotencyKeys.validate(requestedOperationKey);
+        if (request.getTitle() == null || request.getTitle().isBlank()) {
+            throw new IllegalArgumentException("Document title is required.");
+        }
         String applicationId = blankToNull(request.getApplicationId());
         if (Boolean.TRUE.equals(request.getActive())) {
             throw new IllegalArgumentException(
@@ -460,6 +463,8 @@ public class GeneratedDocumentService {
                 .archivedAt(withUtcOffset(document.getArchivedAt()))
                 .deletedAt(withUtcOffset(document.getDeletedAt()))
                 .purgeEligibleAt(withUtcOffset(document.getPurgeEligibleAt()))
+                .purgedAt(withUtcOffset(document.getPurgedAt()))
+                .unavailableReason(document.getUnavailableReason())
                 .legalHold(document.isLegalHold())
                 .originalFilename(document.getOriginalFilename())
                 .sourceType(document.getSourceType())

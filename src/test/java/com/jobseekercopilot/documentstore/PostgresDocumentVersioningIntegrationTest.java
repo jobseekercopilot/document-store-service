@@ -2,6 +2,9 @@ package com.jobseekercopilot.documentstore;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
 
 import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
 import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
@@ -9,8 +12,12 @@ import com.jobseekercopilot.documentstore.dto.DocumentFileResponse;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
 import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.dto.ExpectedCurrentState;
+import com.jobseekercopilot.documentstore.dto.DocumentApplicationAssociationSnapshot;
+import com.jobseekercopilot.documentstore.dto.DocumentApplicationAssociationsSnapshot;
 import com.jobseekercopilot.documentstore.dto.SelectFamilyCurrentRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
+import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
+import com.jobseekercopilot.documentstore.entity.DocumentApplicationAssociationState;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.exception.OperationConflictException;
@@ -18,10 +25,13 @@ import com.jobseekercopilot.documentstore.repository.DocumentStorageOperationRep
 import com.jobseekercopilot.documentstore.repository.DocumentCurrentCommandRepository;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.repository.DocumentTombstoneAssociationRepository;
 import com.jobseekercopilot.documentstore.service.DocumentFileService;
 import com.jobseekercopilot.documentstore.service.DocumentFileValidator;
 import com.jobseekercopilot.documentstore.service.GeneratedDocumentService;
 import com.jobseekercopilot.documentstore.service.DocumentFamilyHistoryService;
+import com.jobseekercopilot.documentstore.service.DocumentRetentionService;
+import com.jobseekercopilot.documentstore.service.ApplicationAssociationClient;
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -73,6 +83,10 @@ class PostgresDocumentVersioningIntegrationTest {
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
         registry.add(
                 "document-store.database.production-safety-check", () -> "false");
+        registry.add("document-store.retention.purge-enabled", () -> "true");
+        registry.add(
+                "document-store.retention.policy-version",
+                () -> "postgres-test-approved-v1");
     }
 
     @Autowired
@@ -86,6 +100,12 @@ class PostgresDocumentVersioningIntegrationTest {
 
     @Autowired
     private GeneratedDocumentRepository documentRepository;
+
+    @Autowired
+    private DocumentTombstoneAssociationRepository tombstoneAssociationRepository;
+
+    @Autowired
+    private DocumentRetentionService retentionService;
 
     @Autowired
     private ExportedDocumentFileRepository fileRepository;
@@ -102,12 +122,63 @@ class PostgresDocumentVersioningIntegrationTest {
     @MockBean
     private DocumentObjectStorage objectStorage;
 
+    @MockBean
+    private ApplicationAssociationClient applicationAssociationClient;
+
     @BeforeEach
     void cleanDatabase() {
         currentCommandRepository.deleteAllInBatch();
         fileRepository.deleteAllInBatch();
         storageOperationRepository.deleteAllInBatch();
+        tombstoneAssociationRepository.deleteAllInBatch();
         documentRepository.deleteAllInBatch();
+    }
+
+    @Test
+    void postgresMigrationPreservesScrubbedTombstoneAndFrozenAssociation() {
+        GeneratedDocument document = documentRepository.saveAndFlush(
+                GeneratedDocument.builder()
+                        .userId(OWNER)
+                        .jobId("tombstone-job")
+                        .documentType(DocumentType.CV)
+                        .title("Must be scrubbed")
+                        .content("Sensitive content must be scrubbed")
+                        .contentSha256("a".repeat(64))
+                        .originalFilename("private-name.pdf")
+                        .build());
+        UUID applicationId = UUID.randomUUID();
+        when(applicationAssociationClient.associations(
+                        OWNER, document.getId()))
+                .thenReturn(new DocumentApplicationAssociationsSnapshot(
+                        document.getId(),
+                        1,
+                        List.of(new DocumentApplicationAssociationSnapshot(
+                                applicationId,
+                                DocumentType.CV,
+                                DocumentApplicationAssociationState.FROZEN_USED,
+                                "APPLIED",
+                                LocalDateTime.now().minusDays(3)))));
+
+        retentionService.softDelete(OWNER, document.getId(), OWNER);
+        GeneratedDocument deleted = documentRepository.findById(document.getId())
+                .orElseThrow();
+        deleted.setPurgeEligibleAt(LocalDateTime.now().minusSeconds(1));
+        documentRepository.saveAndFlush(deleted);
+        retentionService.purge(OWNER, document.getId(), "retention-admin");
+
+        GeneratedDocument tombstone = documentRepository.findById(document.getId())
+                .orElseThrow();
+        assertThat(tombstone.getRetentionState())
+                .isEqualTo(DocumentRetentionState.PURGED);
+        assertThat(tombstone.getContent()).isNull();
+        assertThat(tombstone.getTitle()).isNull();
+        assertThat(tombstone.getContentSha256()).isNull();
+        assertThat(tombstone.getOriginalFilename()).isNull();
+        assertThat(tombstoneAssociationRepository
+                        .findByDocumentIdOrderByApplicationIdAsc(document.getId()))
+                .singleElement()
+                .extracting(association -> association.getApplicationId())
+                .isEqualTo(applicationId);
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.jobseekercopilot.documentstore;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterAll;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,7 +57,22 @@ class OpenApiExportTest {
                 .getContentAsString();
         var generated = objectMapper.readTree(specification);
 
-        assertEquals("3.1.0", generated.at("/info/version").asText());
+        assertEquals("3.3.0", generated.at("/info/version").asText());
+        assertTrue(generated.at(
+                        "/components/schemas/GeneratedDocumentResponse/properties")
+                .has("purgedAt"));
+        assertTrue(generated.at(
+                        "/components/schemas/GeneratedDocumentResponse/properties")
+                .has("unavailableReason"));
+        assertTrue(generated.at(
+                        "/components/schemas/DocumentVersionHistoryItem/properties")
+                .has("applicationAssociations"));
+        assertTrue(generated.at(
+                        "/components/schemas/DocumentTombstoneAssociationResponse/properties")
+                .has("associationState"));
+        assertFalse(generated.at(
+                        "/components/schemas/DocumentTombstoneAssociationResponse/properties")
+                .has("contentSha256"));
         assertEquals(
                 "downloadDocumentArtifact",
                 generated.at("/paths/~1api~1v1~1documents~1{generatedDocumentId}~1artifacts~1{artifactId}~1download/get/operationId")

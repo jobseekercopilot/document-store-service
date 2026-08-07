@@ -8,6 +8,7 @@ import com.jobseekercopilot.documentstore.dto.DocumentFamilyHistoryResponse;
 import com.jobseekercopilot.documentstore.dto.DocumentFamilyPageResponse;
 import com.jobseekercopilot.documentstore.dto.DocumentFamilySummary;
 import com.jobseekercopilot.documentstore.dto.DocumentVersionHistoryItem;
+import com.jobseekercopilot.documentstore.dto.DocumentTombstoneAssociationResponse;
 import com.jobseekercopilot.documentstore.dto.ExpectedCurrentState;
 import com.jobseekercopilot.documentstore.dto.SelectFamilyCurrentRequest;
 import com.jobseekercopilot.documentstore.entity.DocumentCurrentCommand;
@@ -23,6 +24,7 @@ import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
 import com.jobseekercopilot.documentstore.repository.DocumentCurrentCommandRepository;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.repository.DocumentTombstoneAssociationRepository;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -44,6 +46,8 @@ public class DocumentFamilyHistoryService {
     private final GeneratedDocumentRepository documentRepository;
     private final ExportedDocumentFileRepository fileRepository;
     private final DocumentCurrentCommandRepository currentCommandRepository;
+    private final DocumentTombstoneAssociationRepository
+            tombstoneAssociationRepository;
     private final DocumentOperationLock operationLock;
     private final DocumentStoreMetrics metrics;
 
@@ -234,8 +238,22 @@ public class DocumentFamilyHistoryService {
                 utc(version.getArchivedAt()),
                 utc(version.getDeletedAt()),
                 utc(version.getPurgeEligibleAt()),
+                utc(version.getPurgedAt()),
+                version.getUnavailableReason(),
                 utc(version.getCreatedAt()),
                 utc(version.getUpdatedAt()),
+                tombstoneAssociationRepository
+                        .findByDocumentIdOrderByApplicationIdAsc(
+                                version.getId())
+                        .stream()
+                        .map(association ->
+                                new DocumentTombstoneAssociationResponse(
+                                        association.getApplicationId(),
+                                        association.getDocumentType(),
+                                        association.getAssociationState(),
+                                        association.getApplicationStatus(),
+                                        utc(association.getFrozenAt())))
+                        .toList(),
                 artifacts.stream().map(this::artifact).toList());
     }
 

@@ -18,6 +18,13 @@ public interface ExportedDocumentFileRepository extends JpaRepository<ExportedDo
             List<UUID> generatedDocumentIds, String ownerId);
     void deleteByGeneratedDocumentIdIn(List<UUID> generatedDocumentIds);
     Optional<ExportedDocumentFile> findByIdAndGeneratedDocument_UserId(UUID id, String userId);
+    Optional<ExportedDocumentFile> findByIdAndOwnerIdAndGeneratedDocument_UserId(
+            UUID id, String ownerId, String userId);
+    Optional<ExportedDocumentFile> findByIdAndGeneratedDocumentIdAndOwnerIdAndGeneratedDocument_UserId(
+            UUID id,
+            UUID generatedDocumentId,
+            String ownerId,
+            String userId);
     Optional<ExportedDocumentFile> findByOwnerIdAndOperationKey(String ownerId, String operationKey);
     List<ExportedDocumentFile> findByGeneratedDocumentIdAndGeneratedDocument_UserIdOrderByCreatedAtDesc(
             UUID generatedDocumentId,

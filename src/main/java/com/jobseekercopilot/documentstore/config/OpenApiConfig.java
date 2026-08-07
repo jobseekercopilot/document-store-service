@@ -54,7 +54,7 @@ public class OpenApiConfig {
                                 - CV - Curriculum Vitae / Resume
                                 - COVER_LETTER - Cover letter for a job application
                                 """)
-                        .version("3.0.0")
+                        .version("3.1.0")
                         .contact(new Contact()
                                 .name("Jobseeker Copilot"))
                         .license(new License()

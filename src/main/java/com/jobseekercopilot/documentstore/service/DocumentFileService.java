@@ -164,23 +164,60 @@ public class DocumentFileService {
                 () -> downloadDocumentFileInternal(ownerId, id));
     }
 
+    public DocumentFileDownload downloadDocumentArtifact(
+            String ownerId,
+            UUID generatedDocumentId,
+            UUID artifactId) {
+        return metrics.observe(
+                "file",
+                "retrieve_export",
+                null,
+                null,
+                () -> downloadDocumentArtifactInternal(
+                        ownerId, generatedDocumentId, artifactId));
+    }
+
     private DocumentFileDownload downloadDocumentFileInternal(
             String ownerId, UUID id) {
-        ExportedDocumentFile file = findActiveDocumentFile(ownerId, id);
+        ExportedDocumentFile file = fileRepository
+                .findByIdAndOwnerIdAndGeneratedDocument_UserId(
+                        id, ownerId, ownerId)
+                .orElseThrow(ResourceNotFoundException::documentFileNotFound);
+        requireOwnedDownloadableDocument(ownerId, file.getGeneratedDocumentId());
+        return downloadRetainedFile(file);
+    }
+
+    private DocumentFileDownload downloadDocumentArtifactInternal(
+            String ownerId,
+            UUID generatedDocumentId,
+            UUID artifactId) {
+        ExportedDocumentFile file = fileRepository
+                .findByIdAndGeneratedDocumentIdAndOwnerIdAndGeneratedDocument_UserId(
+                        artifactId,
+                        generatedDocumentId,
+                        ownerId,
+                        ownerId)
+                .orElseThrow(ResourceNotFoundException::documentFileNotFound);
+        requireOwnedDownloadableDocument(ownerId, generatedDocumentId);
+        return downloadRetainedFile(file);
+    }
+
+    private DocumentFileDownload downloadRetainedFile(ExportedDocumentFile file) {
+        if (file.getStorageStatus() != ObjectStorageStatus.AVAILABLE) {
+            throw ResourceNotFoundException.documentFileNotFound();
+        }
         byte[] content = objectStorage.get(file.getStorageKey());
         String actualSha256 = ObjectIntegrity.sha256(content);
         if (content.length != file.getContentSize()
                 || !actualSha256.equals(file.getContentSha256())) {
-            file.setStorageStatus(ObjectStorageStatus.UNAVAILABLE);
-            fileRepository.save(file);
+            quarantine(file);
             log.error("Document object integrity verification failed");
             throw new ObjectStorageException("Document object failed integrity verification");
         }
         try {
             fileValidator.validateStored(file.getFileType(), content);
         } catch (IllegalArgumentException exception) {
-            file.setStorageStatus(ObjectStorageStatus.UNAVAILABLE);
-            fileRepository.save(file);
+            quarantine(file);
             log.error("Document object safety validation failed");
             throw new ObjectStorageException("Document object failed safety validation");
         }
@@ -196,6 +233,12 @@ public class DocumentFileService {
                 content);
     }
 
+    private void quarantine(ExportedDocumentFile file) {
+        file.setActive(false);
+        file.setStorageStatus(ObjectStorageStatus.UNAVAILABLE);
+        fileRepository.saveAndFlush(file);
+    }
+
     private ExportedDocumentFile findActiveDocumentFile(String ownerId, UUID id) {
         ExportedDocumentFile file = fileRepository.findByIdAndGeneratedDocument_UserId(id, ownerId)
                 .orElseThrow(ResourceNotFoundException::documentFileNotFound);
@@ -204,6 +247,16 @@ public class DocumentFileService {
             throw ResourceNotFoundException.documentFileNotFound();
         }
         return file;
+    }
+
+    private void requireOwnedDownloadableDocument(
+            String ownerId, UUID generatedDocumentId) {
+        var document = documentRepository.findByIdAndUserId(generatedDocumentId, ownerId)
+                .orElseThrow(ResourceNotFoundException::documentFileNotFound);
+        if (document.getRetentionState() != DocumentRetentionState.AVAILABLE
+                && document.getRetentionState() != DocumentRetentionState.ARCHIVED) {
+            throw ResourceNotFoundException.documentFileNotFound();
+        }
     }
 
     public List<DocumentFileResponse> getFilesForDocument(String ownerId, UUID generatedDocumentId) {

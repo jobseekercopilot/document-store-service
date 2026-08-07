@@ -460,6 +460,8 @@ public class GeneratedDocumentService {
                 .archivedAt(withUtcOffset(document.getArchivedAt()))
                 .deletedAt(withUtcOffset(document.getDeletedAt()))
                 .purgeEligibleAt(withUtcOffset(document.getPurgeEligibleAt()))
+                .purgedAt(withUtcOffset(document.getPurgedAt()))
+                .unavailableReason(document.getUnavailableReason())
                 .legalHold(document.isLegalHold())
                 .originalFilename(document.getOriginalFilename())
                 .sourceType(document.getSourceType())

@@ -6,6 +6,7 @@ import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.repository.DocumentTombstoneAssociationRepository;
 import com.jobseekercopilot.documentstore.service.DocumentFileLifecycleService;
 import com.jobseekercopilot.documentstore.service.DocumentFileValidator;
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
@@ -33,6 +34,8 @@ public class DocumentStoreSystemDataController {
     private final EnvironmentDataGuard guard;
     private final GeneratedDocumentRepository documentRepository;
     private final ExportedDocumentFileRepository fileRepository;
+    private final DocumentTombstoneAssociationRepository
+            tombstoneAssociationRepository;
     private final DocumentObjectStorage objectStorage;
     private final DocumentFileLifecycleService fileLifecycleService;
     private final DocumentFileValidator fileValidator;
@@ -41,12 +44,14 @@ public class DocumentStoreSystemDataController {
             EnvironmentDataGuard guard,
             GeneratedDocumentRepository documentRepository,
             ExportedDocumentFileRepository fileRepository,
+            DocumentTombstoneAssociationRepository tombstoneAssociationRepository,
             DocumentObjectStorage objectStorage,
             DocumentFileLifecycleService fileLifecycleService,
             DocumentFileValidator fileValidator) {
         this.guard = guard;
         this.documentRepository = documentRepository;
         this.fileRepository = fileRepository;
+        this.tombstoneAssociationRepository = tombstoneAssociationRepository;
         this.objectStorage = objectStorage;
         this.fileLifecycleService = fileLifecycleService;
         this.fileValidator = fileValidator;
@@ -76,6 +81,7 @@ public class DocumentStoreSystemDataController {
         int fileCount = documentIds.isEmpty() ? 0 : fileRepository.findByGeneratedDocumentIdIn(documentIds).size();
         if (!documentIds.isEmpty()) {
             fileLifecycleService.deleteForDocuments(documentIds);
+            tombstoneAssociationRepository.deleteByDocumentIdIn(documentIds);
         }
         documentRepository.deleteByUserId(userId);
         return ResponseEntity.ok(SystemDataResult.success("RESET", documents.size() + fileCount, guard.activeEnvironment(), Map.of(

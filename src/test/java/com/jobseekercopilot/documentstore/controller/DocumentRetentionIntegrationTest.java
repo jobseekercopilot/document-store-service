@@ -1,6 +1,11 @@
 package com.jobseekercopilot.documentstore.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -12,6 +17,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobseekercopilot.documentstore.TestDocumentFiles;
 import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
 import com.jobseekercopilot.documentstore.dto.ApplicationWithdrawalCleanupRequest;
+import com.jobseekercopilot.documentstore.dto.DocumentApplicationAssociationSnapshot;
+import com.jobseekercopilot.documentstore.dto.DocumentApplicationAssociationsSnapshot;
+import com.jobseekercopilot.documentstore.entity.DocumentApplicationAssociationState;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleAction;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleEvent;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
@@ -21,24 +29,30 @@ import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.entity.StorageOperationState;
+import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.repository.DocumentLifecycleEventRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentStorageOperationRepository;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.repository.DocumentTombstoneAssociationRepository;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter;
 import com.jobseekercopilot.documentstore.service.DocumentRetentionMaintenanceService;
+import com.jobseekercopilot.documentstore.service.ApplicationAssociationClient;
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest(properties = {
@@ -81,6 +95,19 @@ class DocumentRetentionIntegrationTest {
 
     @Autowired
     private DocumentObjectStorage objectStorage;
+
+    @Autowired
+    private DocumentTombstoneAssociationRepository tombstoneAssociationRepository;
+
+    @MockBean
+    private ApplicationAssociationClient applicationAssociationClient;
+
+    @BeforeEach
+    void noApplicationAssociationsByDefault() {
+        when(applicationAssociationClient.associations(eq(OWNER), any(UUID.class)))
+                .thenAnswer(invocation -> new DocumentApplicationAssociationsSnapshot(
+                        invocation.getArgument(1), 0, List.of()));
+    }
 
     @Test
     void archiveAndRestoreAreOwnerScopedIdempotentAndAudited() throws Exception {
@@ -163,6 +190,36 @@ class DocumentRetentionIntegrationTest {
                 .andExpect(jsonPath("$[0].action").value("ARCHIVED"))
                 .andExpect(jsonPath("$[1].action").value("RESTORED"))
                 .andExpect(jsonPath("$[0].policyVersion").value("test-approved-v1"));
+    }
+
+    @Test
+    void lifecycleFailsClosedWhenTrackerProjectionCannotBeUpdated()
+            throws Exception {
+        GeneratedDocument document = approvedDocument(null);
+        doThrow(new OperationConflictException(
+                        "Application availability could not be projected; document lifecycle remains unchanged."))
+                .when(applicationAssociationClient)
+                .updateAvailability(
+                        eq(OWNER),
+                        eq(document.getId()),
+                        eq(DocumentRetentionState.ARCHIVED),
+                        eq("ARCHIVED_BY_OWNER"),
+                        any(LocalDateTime.class));
+
+        mockMvc.perform(patch("/api/v1/documents/{id}/archive", document.getId())
+                        .headers(producerHeaders(OWNER)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(
+                        "Application availability could not be projected; document lifecycle remains unchanged."));
+
+        GeneratedDocument unchanged =
+                documentRepository.findById(document.getId()).orElseThrow();
+        assertThat(unchanged.getRetentionState())
+                .isEqualTo(DocumentRetentionState.AVAILABLE);
+        assertThat(unchanged.isActive()).isTrue();
+        assertThat(eventRepository.findByDocumentIdAndOwnerIdOrderByOccurredAtAsc(
+                        document.getId(), OWNER))
+                .isEmpty();
     }
 
     @Test
@@ -314,16 +371,69 @@ class DocumentRetentionIntegrationTest {
                     .andExpect(status().isNoContent());
         }
 
-        assertThat(documentRepository.findById(document.getId())).isEmpty();
+        GeneratedDocument tombstone =
+                documentRepository.findById(document.getId()).orElseThrow();
+        assertThat(tombstone.getRetentionState())
+                .isEqualTo(DocumentRetentionState.PURGED);
+        assertThat(tombstone.getPurgedAt()).isNotNull();
+        assertThat(tombstone.getUnavailableReason())
+                .isEqualTo("PURGED_BY_APPROVED_RETENTION_POLICY");
+        assertThat(tombstone.getTitle()).isNull();
+        assertThat(tombstone.getContent()).isNull();
+        assertThat(tombstone.getContentSha256()).isNull();
+        assertThat(tombstone.getOriginalFilename()).isNull();
         assertThat(fileRepository.findById(fileId)).isEmpty();
         assertThat(objectStorage.exists(storageKey)).isFalse();
         assertThat(eventRepository.existsByDocumentIdAndOwnerIdAndAction(
                         document.getId(), OWNER, DocumentLifecycleAction.PURGED))
                 .isTrue();
+
+        mockMvc.perform(get("/api/v1/documents/families/{id}",
+                                document.getDocumentFamilyId())
+                        .headers(producerHeaders(OWNER)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.versions[0].documentId")
+                        .value(document.getId().toString()))
+                .andExpect(jsonPath("$.versions[0].retention").value("PURGED"))
+                .andExpect(jsonPath("$.versions[0].title").doesNotExist())
+                .andExpect(jsonPath("$.versions[0].artifacts").isEmpty());
+        mockMvc.perform(get("/api/v1/documents/families/{id}",
+                                document.getDocumentFamilyId())
+                        .headers(producerHeaders(OTHER_OWNER)))
+                .andExpect(status().isNotFound());
     }
 
     @Test
-    void legalHoldApplicationHistoryAndPreparedOperationsBlockDeletionOrPurge()
+    void purgeFailsClosedWithoutAssociationEvidenceAndLeavesBytesRecoverable()
+            throws Exception {
+        GeneratedDocument document = draftDocument(null);
+        UUID fileId = createPdf(document.getId());
+        String storageKey = fileRepository.findById(fileId).orElseThrow().getStorageKey();
+        softDeleteAndExpire(document);
+        when(applicationAssociationClient.associations(OWNER, document.getId()))
+                .thenThrow(new OperationConflictException(
+                        "Application associations could not be verified; irreversible purge remains blocked."));
+
+        mockMvc.perform(delete("/api/v1/documents/{id}/purge", document.getId())
+                        .headers(retentionHeaders(OWNER)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(
+                        "Application associations could not be verified; irreversible purge remains blocked."));
+
+        GeneratedDocument unchanged =
+                documentRepository.findById(document.getId()).orElseThrow();
+        assertThat(unchanged.getRetentionState())
+                .isEqualTo(DocumentRetentionState.DELETED);
+        assertThat(unchanged.getContent()).isNotNull();
+        assertThat(fileRepository.findById(fileId)).isPresent();
+        assertThat(objectStorage.exists(storageKey)).isTrue();
+        assertThat(eventRepository.existsByDocumentIdAndOwnerIdAndAction(
+                        document.getId(), OWNER, DocumentLifecycleAction.PURGED))
+                .isFalse();
+    }
+
+    @Test
+    void legalHoldAndPreparedOperationsBlockDeletionOrPurge()
             throws Exception {
         GeneratedDocument held = draftDocument(null);
         mockMvc.perform(get("/api/v1/documents/{id}", held.getId())
@@ -378,15 +488,42 @@ class DocumentRetentionIntegrationTest {
                         "support-case-123-release",
                         null);
 
-        GeneratedDocument applicationLinked = draftDocument("application-history-1");
+        GeneratedDocument applicationLinked = draftDocument("legacy-link-cleared-at-purge");
+        UUID applicationId = UUID.randomUUID();
+        LocalDateTime frozenAt = LocalDateTime.now().minusDays(2);
+        when(applicationAssociationClient.associations(
+                        OWNER, applicationLinked.getId()))
+                .thenReturn(new DocumentApplicationAssociationsSnapshot(
+                        applicationLinked.getId(),
+                        1,
+                        List.of(new DocumentApplicationAssociationSnapshot(
+                                applicationId,
+                                DocumentType.CV,
+                                DocumentApplicationAssociationState.FROZEN_USED,
+                                "SUBMITTED",
+                                frozenAt))));
         softDeleteAndExpire(applicationLinked);
         mockMvc.perform(delete(
                                 "/api/v1/documents/{id}/purge",
                                 applicationLinked.getId())
                         .headers(retentionHeaders(OWNER)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.message").value(
-                        "Application-linked document history cannot be purged."));
+                .andExpect(status().isNoContent());
+        assertThat(tombstoneAssociationRepository
+                        .findByDocumentIdOrderByApplicationIdAsc(
+                                applicationLinked.getId()))
+                .singleElement()
+                .satisfies(association -> {
+                    assertThat(association.getApplicationId())
+                            .isEqualTo(applicationId);
+                    assertThat(association.getAssociationState())
+                            .isEqualTo(DocumentApplicationAssociationState.FROZEN_USED);
+                    assertThat(association.getDocumentType())
+                            .isEqualTo(DocumentType.CV);
+                    assertThat(association.getApplicationStatus())
+                            .isEqualTo("SUBMITTED");
+                    assertThat(association.getFrozenAt())
+                            .isCloseTo(frozenAt, within(1, ChronoUnit.MICROS));
+                });
 
         GeneratedDocument unresolved = draftDocument(null);
         operationRepository.saveAndFlush(DocumentStorageOperation.builder()

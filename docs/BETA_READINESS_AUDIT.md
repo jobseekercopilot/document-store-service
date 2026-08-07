@@ -161,7 +161,7 @@ control.
 ## DOC-09 retention-lifecycle boundary
 
 Document approval (`DRAFT`/`APPROVED`) is now separate from retention
-(`AVAILABLE`/`ARCHIVED`/`DELETED`). Archive, restore and normal deletion are
+(`AVAILABLE`/`ARCHIVED`/`DELETED`/`PURGED`). Archive, restore and normal deletion are
 owner-scoped, family-locked and retry-safe. Archive and deletion deselect the
 version; restore never silently selects it. Soft deletion retains text,
 metadata and binaries for recovery while blocking file access, mutation,
@@ -169,20 +169,21 @@ approval, current selection and new application references.
 
 Irreversible purge requires a distinct retention-administrator identity, an
 explicit approved-policy version and enable flag, an expired recovery window,
-no legal hold, no local application link and no unresolved `PREPARED` storage
-operation. It removes Store text, metadata and objects while retaining a
-bounded content-free audit event. Bounded maintenance can remove only expired
+no legal hold, an authoritative Tracker association snapshot and projection,
+and no unresolved `PREPARED` storage operation. It removes Store text and
+objects while retaining a scrubbed owner-visible tombstone, exact content-free
+application/freeze associations and bounded audit event. Bounded maintenance can remove only expired
 completed journal rows and lifecycle events; it is disabled and fail-closed
 without an approved policy and never deletes `PREPARED` rows or reconciliation
 cursors.
 
-The proposed periods, exact user copy, support/legal-hold process, backup and
+The approved periods, exact user copy, support/legal-hold process, backup and
 export boundaries, and production approval checklist are published in
 [`RETENTION_AND_PURGE.md`](RETENTION_AND_PURGE.md). This repository slice does
-not constitute product/legal/privacy approval. Client recovery UX,
-Application Tracker reference reconciliation, managed backup expiry,
-administrator credential deployment and integrated cross-user evidence remain
-beta dependencies; production purge and maintenance therefore remain off.
+record product/legal/privacy approval dated 2026-08-07. Client recovery UX,
+managed backup/object/log expiry, administrator credential deployment and
+integrated cross-user evidence remain beta dependencies; production purge
+therefore remains off.
 
 Local verification passed `mvn -B --no-transfer-progress -Ddebug=false clean
 verify`: 111 tests, zero failures, zero errors and zero skipped. It includes the

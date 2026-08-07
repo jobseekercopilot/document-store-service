@@ -12,12 +12,14 @@ import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.entity.GenerationProvenance;
 import com.jobseekercopilot.documentstore.entity.StorageOperationState;
+import com.jobseekercopilot.documentstore.entity.DocumentTombstoneAssociation;
 import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.exception.ResourceNotFoundException;
 import com.jobseekercopilot.documentstore.repository.DocumentLifecycleEventRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentApplicationWorkflowCommandRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentStorageOperationRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.repository.DocumentTombstoneAssociationRepository;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -42,6 +44,9 @@ public class DocumentRetentionService {
     private final DocumentApplicationWorkflowCommandRepository
             applicationWorkflowCommandRepository;
     private final DocumentStorageOperationRepository storageOperationRepository;
+    private final DocumentTombstoneAssociationRepository
+            tombstoneAssociationRepository;
+    private final ApplicationAssociationClient applicationAssociationClient;
     private final DocumentFileLifecycleService fileLifecycleService;
     private final DocumentOperationLock operationLock;
     private final DocumentRetentionProperties properties;
@@ -49,6 +54,7 @@ public class DocumentRetentionService {
     @Transactional
     public GeneratedDocumentResponse archive(String ownerId, UUID documentId, String actorId) {
         GeneratedDocument document = lockOwnedDocument(ownerId, documentId);
+        requireRetained(document);
         if (document.getRetentionState() == DocumentRetentionState.ARCHIVED) {
             return response(document);
         }
@@ -59,6 +65,12 @@ public class DocumentRetentionService {
 
         DocumentRetentionState previous = document.getRetentionState();
         LocalDateTime now = LocalDateTime.now();
+        applicationAssociationClient.updateAvailability(
+                ownerId,
+                documentId,
+                DocumentRetentionState.ARCHIVED,
+                "ARCHIVED_BY_OWNER",
+                now);
         document.setActive(false);
         document.setRetentionState(DocumentRetentionState.ARCHIVED);
         document.setArchivedAt(now);
@@ -74,12 +86,25 @@ public class DocumentRetentionService {
     @Transactional
     public GeneratedDocumentResponse restore(String ownerId, UUID documentId, String actorId) {
         GeneratedDocument document = lockOwnedDocument(ownerId, documentId);
+        requireRetained(document);
         if (document.getRetentionState() == DocumentRetentionState.AVAILABLE) {
             return response(document);
         }
 
         DocumentRetentionState previous = document.getRetentionState();
         LocalDateTime now = LocalDateTime.now();
+        if (previous == DocumentRetentionState.DELETED
+                && document.getPurgeEligibleAt() != null
+                && !now.isBefore(document.getPurgeEligibleAt())) {
+            throw new OperationConflictException(
+                    "Document recovery window has expired.");
+        }
+        applicationAssociationClient.updateAvailability(
+                ownerId,
+                documentId,
+                DocumentRetentionState.AVAILABLE,
+                null,
+                now);
         document.setActive(false);
         document.setRetentionState(DocumentRetentionState.AVAILABLE);
         document.setArchivedAt(null);
@@ -161,6 +186,7 @@ public class DocumentRetentionService {
             String actorId,
             String operationReference) {
         GeneratedDocument document = lockOwnedDocument(ownerId, documentId);
+        requireRetained(document);
         if (document.getRetentionState() == DocumentRetentionState.DELETED) {
             return;
         }
@@ -171,6 +197,12 @@ public class DocumentRetentionService {
 
         DocumentRetentionState previous = document.getRetentionState();
         LocalDateTime now = LocalDateTime.now();
+        applicationAssociationClient.updateAvailability(
+                ownerId,
+                documentId,
+                DocumentRetentionState.DELETED,
+                "RECOVERABLY_DELETED_BY_OWNER",
+                now);
         document.setActive(false);
         document.setRetentionState(DocumentRetentionState.DELETED);
         document.setDeletedAt(now);
@@ -196,6 +228,7 @@ public class DocumentRetentionService {
             String reference,
             String actorId) {
         GeneratedDocument document = lockOwnedDocument(ownerId, documentId);
+        requireRetained(document);
         String normalizedReference = reference == null ? "" : reference.trim();
         if (normalizedReference.isEmpty()) {
             throw new IllegalArgumentException("Legal hold reference is required.");
@@ -247,6 +280,9 @@ public class DocumentRetentionService {
             throw ResourceNotFoundException.documentNotFound();
         }
         GeneratedDocument document = lockOwnedDocument(ownerId, documentId);
+        if (document.getRetentionState() == DocumentRetentionState.PURGED) {
+            return;
+        }
         if (document.getRetentionState() != DocumentRetentionState.DELETED) {
             throw new OperationConflictException(
                     "Only a soft-deleted document can be irreversibly purged.");
@@ -254,10 +290,6 @@ public class DocumentRetentionService {
         if (document.isLegalHold()) {
             throw new OperationConflictException(
                     "Document is protected by a legal hold and cannot be purged.");
-        }
-        if (document.getApplicationId() != null && !document.getApplicationId().isBlank()) {
-            throw new OperationConflictException(
-                    "Application-linked document history cannot be purged.");
         }
         LocalDateTime now = LocalDateTime.now();
         if (document.getPurgeEligibleAt() == null
@@ -271,17 +303,79 @@ public class DocumentRetentionService {
                     "Document has an unresolved storage operation and cannot be purged.");
         }
 
+        var associationSnapshot = applicationAssociationClient.associations(
+                ownerId,
+                documentId);
+        applicationAssociationClient.updateAvailability(
+                ownerId,
+                documentId,
+                DocumentRetentionState.PURGED,
+                "PURGED_BY_APPROVED_RETENTION_POLICY",
+                now);
         fileLifecycleService.deleteForDocuments(List.of(documentId));
+        tombstoneAssociationRepository.saveAll(
+                associationSnapshot.associations().stream()
+                        .map(association ->
+                                DocumentTombstoneAssociation.builder()
+                                        .documentId(documentId)
+                                        .applicationId(
+                                                association.applicationId())
+                                        .associationState(
+                                                association.associationState())
+                                        .documentType(
+                                                association.documentType())
+                                        .applicationStatus(
+                                                association.applicationStatus())
+                                        .frozenAt(association.frozenAt())
+                                        .build())
+                        .toList());
+        document.setRetentionState(DocumentRetentionState.PURGED);
+        document.setPurgedAt(now);
+        document.setUnavailableReason(
+                "PURGED_BY_APPROVED_RETENTION_POLICY");
+        scrubToTombstone(document);
+        documentRepository.saveAndFlush(document);
         record(
                 document,
                 DocumentLifecycleAction.PURGED,
                 DocumentRetentionState.DELETED,
                 actorId,
                 now);
-        documentRepository.delete(document);
-        documentRepository.flush();
         log.info("Document irreversibly purged documentType={} version={}",
                 document.getDocumentType(), document.getVersion());
+    }
+
+    private void scrubToTombstone(GeneratedDocument document) {
+        document.setActive(false);
+        document.setApplicationId(null);
+        document.setTitle(null);
+        document.setContent(null);
+        document.setContentSha256(null);
+        document.setGenerationProvenance(null);
+        document.setEvidenceProvenance(null);
+        document.setParentDocumentId(null);
+        document.setParentDocumentVersion(null);
+        document.setApprovedAt(null);
+        document.setApprovedBy(null);
+        document.setArchivedAt(null);
+        document.setArchivedBy(null);
+        document.setDeletedBy(null);
+        document.setPurgeEligibleAt(null);
+        document.setLegalHold(false);
+        document.setLegalHoldReference(null);
+        document.setLegalHoldUpdatedAt(null);
+        document.setLegalHoldUpdatedBy(null);
+        document.setOperationKey(null);
+        document.setRequestSha256(null);
+        document.setOriginalFilename(null);
+        document.setCreatedBy(null);
+    }
+
+    private void requireRetained(GeneratedDocument document) {
+        if (document.getRetentionState() == DocumentRetentionState.PURGED) {
+            throw new OperationConflictException(
+                    "Purged document tombstones cannot be changed or restored.");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -385,6 +479,8 @@ public class DocumentRetentionService {
                 .archivedAt(withUtcOffset(document.getArchivedAt()))
                 .deletedAt(withUtcOffset(document.getDeletedAt()))
                 .purgeEligibleAt(withUtcOffset(document.getPurgeEligibleAt()))
+                .purgedAt(withUtcOffset(document.getPurgedAt()))
+                .unavailableReason(document.getUnavailableReason())
                 .legalHold(document.isLegalHold())
                 .originalFilename(document.getOriginalFilename())
                 .sourceType(document.getSourceType())

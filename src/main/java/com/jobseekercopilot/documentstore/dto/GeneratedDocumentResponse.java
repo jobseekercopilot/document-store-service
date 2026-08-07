@@ -85,6 +85,12 @@ public class GeneratedDocumentResponse {
     @Schema(description = "Earliest time an authorized purge may be considered")
     private OffsetDateTime purgeEligibleAt;
 
+    @Schema(description = "Timestamp when content was irreversibly purged and this response became a minimal tombstone")
+    private OffsetDateTime purgedAt;
+
+    @Schema(description = "Stable content-free reason exact document bytes are unavailable")
+    private String unavailableReason;
+
     private boolean legalHold;
 
     @Schema(description = "Original filename for uploaded documents")

@@ -9,7 +9,7 @@
     "license" : {
       "name" : "Proprietary and confidential"
     },
-    "version" : "3.1.0"
+    "version" : "3.2.0"
   },
   "servers" : [ {
     "url" : "http://localhost:8089",
@@ -193,22 +193,22 @@
           }
         },
         "responses" : {
-          "413" : {
-            "description" : "Upload exceeds a configured safety limit",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "404" : {
             "description" : "Generated document not found",
             "content" : {
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          },
+          "413" : {
+            "description" : "Upload exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -364,16 +364,6 @@
           "required" : true
         },
         "responses" : {
-          "413" : {
-            "description" : "Decoded file or archive exceeds a configured safety limit",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "404" : {
             "description" : "Generated document not found",
             "content" : {
@@ -400,6 +390,16 @@
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          },
+          "413" : {
+            "description" : "Decoded file or archive exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1515,6 +1515,16 @@
           }
         } ],
         "responses" : {
+          "503" : {
+            "description" : "Stored file failed integrity or safety validation",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404" : {
             "description" : "Exported file not found",
             "content" : {
@@ -1525,16 +1535,6 @@
                     "type" : "string",
                     "format" : "byte"
                   }
-                }
-              }
-            }
-          },
-          "503" : {
-            "description" : "Stored file failed integrity or safety validation",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1782,7 +1782,7 @@
           },
           "retentionState" : {
             "type" : "string",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "contentSha256" : {
             "type" : "string"
@@ -1829,6 +1829,13 @@
           "purgeEligibleAt" : {
             "type" : "string",
             "format" : "date-time"
+          },
+          "purgedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "unavailableReason" : {
+            "type" : "string"
           },
           "legalHold" : {
             "type" : "boolean"
@@ -2287,7 +2294,7 @@
           "retentionState" : {
             "type" : "string",
             "description" : "Recoverable retention state",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "contentSha256" : {
             "type" : "string",
@@ -2332,6 +2339,15 @@
             "type" : "string",
             "description" : "Earliest time an authorized purge may be considered",
             "format" : "date-time"
+          },
+          "purgedAt" : {
+            "type" : "string",
+            "description" : "Timestamp when content was irreversibly purged and this response became a minimal tombstone",
+            "format" : "date-time"
+          },
+          "unavailableReason" : {
+            "type" : "string",
+            "description" : "Stable content-free reason exact document bytes are unavailable"
           },
           "legalHold" : {
             "type" : "boolean"
@@ -2661,11 +2677,11 @@
           },
           "fromState" : {
             "type" : "string",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "toState" : {
             "type" : "string",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "actorId" : {
             "type" : "string"
@@ -2739,7 +2755,7 @@
           },
           "latestRetention" : {
             "type" : "string",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "currentDocumentId" : {
             "type" : "string",
@@ -2837,6 +2853,30 @@
         },
         "description" : "Owner-scoped newest-first history for one document family"
       },
+      "DocumentTombstoneAssociationResponse" : {
+        "type" : "object",
+        "properties" : {
+          "applicationId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "documentType" : {
+            "type" : "string",
+            "enum" : [ "CV", "COVER_LETTER" ]
+          },
+          "associationState" : {
+            "type" : "string",
+            "enum" : [ "DRAFT_SELECTED", "FROZEN_USED" ]
+          },
+          "applicationStatus" : {
+            "type" : "string"
+          },
+          "frozenAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
       "DocumentVersionHistoryItem" : {
         "type" : "object",
         "properties" : {
@@ -2861,7 +2901,7 @@
           },
           "retention" : {
             "type" : "string",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "current" : {
             "type" : "boolean"
@@ -2882,6 +2922,13 @@
             "type" : "string",
             "format" : "date-time"
           },
+          "purgedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "unavailableReason" : {
+            "type" : "string"
+          },
           "createdAt" : {
             "type" : "string",
             "format" : "date-time"
@@ -2889,6 +2936,12 @@
           "updatedAt" : {
             "type" : "string",
             "format" : "date-time"
+          },
+          "applicationAssociations" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/DocumentTombstoneAssociationResponse"
+            }
           },
           "artifacts" : {
             "type" : "array",

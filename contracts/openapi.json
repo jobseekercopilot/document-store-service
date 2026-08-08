@@ -2127,7 +2127,7 @@
             "type" : "string"
           },
           "claims" : {
-            "maxItems" : 40,
+            "maxItems" : 200,
             "minItems" : 0,
             "type" : "array",
             "items" : {

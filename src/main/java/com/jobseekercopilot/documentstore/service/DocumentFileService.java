@@ -149,6 +149,40 @@ public class DocumentFileService {
         }
     }
 
+    @Transactional
+    public DocumentFileResponse storeApplicationUploadArtifact(
+            String ownerId,
+            UUID generatedDocumentId,
+            FileType fileType,
+            String originalFileName,
+            String declaredMimeType,
+            byte[] content,
+            String requestedOperationKey) {
+        return metrics.observe(
+                "file",
+                "store_upload",
+                null,
+                fileType,
+                () -> {
+                    requireOwnedMutableDocument(ownerId, generatedDocumentId);
+                    fileValidator.validateApplicationUpload(
+                            fileType,
+                            originalFileName,
+                            declaredMimeType,
+                            content);
+                    ExportedDocumentFile saved = storeMetadataAndObject(
+                            ownerId,
+                            generatedDocumentId,
+                            fileType,
+                            FileSource.USER_UPLOADED,
+                            content,
+                            requestedOperationKey);
+                    metrics.recordPayload(
+                            "file", "stored", null, fileType, content.length);
+                    return mapToResponse(saved);
+                });
+    }
+
     public DocumentFileResponse getDocumentFileMetadata(String ownerId, UUID id) {
         return metrics.observe(
                 "file",

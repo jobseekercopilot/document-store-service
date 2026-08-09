@@ -91,6 +91,14 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
         if (requestUri.startsWith("/api/v1/documents")) {
             return "/api/v1/documents/**";
         }
+        if (requestUri.startsWith("/api/v1/application-document-uploads")) {
+            return "/api/v1/application-document-uploads/**";
+        }
+        if (requestUri.startsWith("/api/v1/applications/")
+                && requestUri.contains("/documents/")
+                && requestUri.endsWith("/uploads")) {
+            return "/api/v1/applications/*/documents/*/uploads";
+        }
         if (requestUri.startsWith("/internal/system-data")) {
             return "/internal/system-data/**";
         }

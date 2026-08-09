@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.mock;
 
 import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
+import com.jobseekercopilot.documentstore.config.DocumentUploadProperties;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
@@ -42,7 +43,8 @@ class GeneratedDocumentObservabilityTest {
                 retentionService,
                 operationLock,
                 new DocumentStoreMetrics(registry),
-                mock(DocumentActivityService.class));
+                mock(DocumentActivityService.class),
+                new DocumentUploadProperties());
     }
 
     @Test

@@ -363,6 +363,11 @@ public class DocumentRetentionService {
         document.setTitle(null);
         document.setContent(null);
         document.setContentSha256(null);
+        document.setOriginalContentSha256(null);
+        document.setOriginalContentSize(null);
+        document.setOriginalArtifactId(null);
+        document.setOriginalFileType(null);
+        document.setExtractionState(null);
         document.setGenerationProvenance(null);
         document.setEvidenceProvenance(null);
         document.setParentDocumentId(null);
@@ -485,6 +490,11 @@ public class DocumentRetentionService {
                 .lifecycleState(document.getLifecycleState())
                 .retentionState(document.getRetentionState())
                 .contentSha256(document.getContentSha256())
+                .originalContentSha256(document.getOriginalContentSha256())
+                .originalContentSize(document.getOriginalContentSize())
+                .originalArtifactId(document.getOriginalArtifactId())
+                .originalFileType(document.getOriginalFileType())
+                .extractionState(document.getExtractionState())
                 .generationMetadata(generationMetadata(document.getGenerationProvenance()))
                 .approvedAt(withUtcOffset(document.getApprovedAt()))
                 .approvedBy(document.getApprovedBy())

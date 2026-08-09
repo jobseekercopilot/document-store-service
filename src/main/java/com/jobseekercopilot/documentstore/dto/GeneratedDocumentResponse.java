@@ -5,6 +5,8 @@ import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import com.jobseekercopilot.documentstore.entity.DocumentGroundingState;
+import com.jobseekercopilot.documentstore.entity.DocumentExtractionState;
+import com.jobseekercopilot.documentstore.entity.FileType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -61,6 +63,17 @@ public class GeneratedDocumentResponse {
 
     @Schema(description = "SHA-256 of the stored text content")
     private String contentSha256;
+
+    @Schema(description = "SHA-256 of the exact uploaded original bytes")
+    private String originalContentSha256;
+
+    private Long originalContentSize;
+
+    private UUID originalArtifactId;
+
+    private FileType originalFileType;
+
+    private DocumentExtractionState extractionState;
 
     private GenerationMetadata generationMetadata;
 

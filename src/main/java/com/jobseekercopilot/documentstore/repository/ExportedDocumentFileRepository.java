@@ -14,6 +14,7 @@ import java.util.UUID;
 public interface ExportedDocumentFileRepository extends JpaRepository<ExportedDocumentFile, UUID> {
     List<ExportedDocumentFile> findByGeneratedDocumentIdOrderByCreatedAtDesc(UUID generatedDocumentId);
     List<ExportedDocumentFile> findByGeneratedDocumentIdIn(List<UUID> generatedDocumentIds);
+    long countByOwnerId(String ownerId);
     List<ExportedDocumentFile> findByGeneratedDocumentIdInAndOwnerIdOrderByCreatedAtAsc(
             List<UUID> generatedDocumentIds, String ownerId);
     void deleteByGeneratedDocumentIdIn(List<UUID> generatedDocumentIds);

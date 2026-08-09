@@ -15,6 +15,10 @@ public interface DocumentActivityEventRepository
 
     boolean existsByEventKey(String eventKey);
 
+    long countByOwnerId(String ownerId);
+
+    void deleteByOwnerId(String ownerId);
+
     java.util.List<DocumentActivityEvent>
             findByRetentionExpiresAtBeforeOrderByRetentionExpiresAtAsc(
                     LocalDateTime cutoff, Pageable pageable);

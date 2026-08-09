@@ -51,7 +51,7 @@ remain required.
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-4.0.0 contract. It includes content-free paged family summaries, newest-first
+4.1.0 contract. It includes content-free paged family summaries, newest-first
 server-numbered history, safe exact-artifact manifests and a concurrency- and
 idempotency-protected explicit current-pointer command. Approval and current
 selection are independent. Exact retained artifacts can be downloaded through
@@ -84,6 +84,12 @@ bounded deterministic extraction and atomic publication. Only a clean
 artifact. Original-byte and normalised-text SHA-256 values remain distinct;
 uploads do not call Payment, CV/Letter Service, OpenAI or another public
 scanner.
+
+Version 4.1.0 adds an internal, environment-data-authenticated runtime-owner
+reset and verification boundary. It accepts only the deterministic synthetic
+owner derived from the named scenario and identity and is enabled only for an
+explicitly isolated non-production database. Existing public and fixture
+operations are unchanged.
 
 The identity sources, least-privilege service roles, authorization matrix,
 stable denial rules and deployment dependencies are defined in

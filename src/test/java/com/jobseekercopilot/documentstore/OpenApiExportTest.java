@@ -57,7 +57,7 @@ class OpenApiExportTest {
                 .getContentAsString();
         var generated = objectMapper.readTree(specification);
 
-        assertEquals("4.0.0", generated.at("/info/version").asText());
+        assertEquals("4.1.0", generated.at("/info/version").asText());
         var upload = generated.at(
                 "/paths/~1api~1v1~1applications~1{applicationId}~1documents~1{documentType}~1uploads/post");
         assertTrue(upload.isObject());

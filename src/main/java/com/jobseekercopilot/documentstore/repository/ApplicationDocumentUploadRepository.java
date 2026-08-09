@@ -22,6 +22,12 @@ public interface ApplicationDocumentUploadRepository
     Optional<ApplicationDocumentUpload> findByIdAndOwnerId(
             UUID id, String ownerId);
 
+    List<ApplicationDocumentUpload> findByOwnerId(String ownerId);
+
+    long countByOwnerId(String ownerId);
+
+    void deleteByOwnerId(String ownerId);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update ApplicationDocumentUpload upload "
             + "set upload.processingStartedAt = :startedAt, upload.updatedAt = :startedAt "

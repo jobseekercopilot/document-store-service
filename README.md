@@ -1,5 +1,13 @@
 # Document Store Service
 
+## Role in Job Seeker Copilot
+
+| Role | Called by | Calls | Data | Local port |
+|---|---|---|---|---:|
+| System of record for document families, immutable versions, files, lineage and retention lifecycle | Document Generation/BFF, Export, Tracker and Reporting | Application Tracker workflows; ClamAV | PostgreSQL metadata + configured object store | 8089 |
+
+See the central [document journey](https://docs.jobseekercopilot.com/journeys/documents/), [domain model](https://docs.jobseekercopilot.com/data/domain-models/), and [data ownership](https://docs.jobseekercopilot.com/data/ownership/).
+
 Persistence service for generated CV and cover-letter text, relational file
 metadata, and private object-backed DOCX/PDF bytes.
 

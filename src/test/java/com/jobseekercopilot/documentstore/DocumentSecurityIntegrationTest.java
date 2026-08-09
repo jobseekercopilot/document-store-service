@@ -34,11 +34,13 @@ import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
 import com.jobseekercopilot.documentstore.service.DocumentAccountLifecycleService;
 import com.jobseekercopilot.documentstore.dto.AccountDocumentDeletionResponse;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,7 +57,10 @@ import org.springframework.test.web.servlet.MvcResult;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-@SpringBootTest(properties = "environment-data.enabled=true")
+@SpringBootTest(properties = {
+        "environment-data.enabled=true",
+        "environment-data.isolated-database=true"
+})
 @AutoConfigureMockMvc
 class DocumentSecurityIntegrationTest {
 
@@ -102,6 +107,7 @@ class DocumentSecurityIntegrationTest {
     private DocumentAccountLifecycleService accountLifecycleService;
 
     @BeforeEach
+    @AfterEach
     void cleanDatabase() {
         fileRepository.deleteAll();
         documentRepository.deleteAll();
@@ -413,6 +419,64 @@ class DocumentSecurityIntegrationTest {
     }
 
     @Test
+    void runtimeOwnerCleanupIsSyntheticBoundedCrossOwnerSafeAndRepeatable()
+            throws Exception {
+        String scenarioId = "cross-user-security-v1";
+        String identityKey = "claimant-a";
+        UUID ownerId = syntheticOwner(scenarioId, identityKey);
+        UUID otherOwnerId = syntheticOwner(scenarioId, "claimant-b");
+        GeneratedDocument ownerDocument = saveDocument(
+                ownerId.toString(), UUID.randomUUID().toString());
+        ExportedDocumentFile ownerFile = saveFile(ownerDocument);
+        GeneratedDocument otherDocument = saveDocument(
+                otherOwnerId.toString(), UUID.randomUUID().toString());
+        ExportedDocumentFile otherFile = saveFile(otherDocument);
+        String path = "/internal/system-data/v1/runtime-owners/{scenarioId}"
+                + "/identities/{identityKey}/owners/{userId}";
+
+        mockMvc.perform(get(path, scenarioId, identityKey, ownerId)
+                        .header(
+                                DocumentServiceIdentityFilter
+                                        .ENVIRONMENT_DATA_HEADER,
+                                ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.details.documents").value(1))
+                .andExpect(jsonPath("$.details.files").value(1));
+
+        mockMvc.perform(delete(path, scenarioId, identityKey, UUID.randomUUID())
+                        .header(
+                                DocumentServiceIdentityFilter
+                                        .ENVIRONMENT_DATA_HEADER,
+                                ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(delete(path, scenarioId, identityKey, ownerId)
+                        .header(
+                                DocumentServiceIdentityFilter
+                                        .ENVIRONMENT_DATA_HEADER,
+                                ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.details.documents").value(1))
+                .andExpect(jsonPath("$.details.files").value(1))
+                .andExpect(jsonPath("$.recordsAffected").value(2));
+
+        assertFalse(documentRepository.existsById(ownerDocument.getId()));
+        assertFalse(fileRepository.existsById(ownerFile.getId()));
+        assertFalse(objectStorage.exists(ownerFile.getStorageKey()));
+        assertTrue(documentRepository.existsById(otherDocument.getId()));
+        assertTrue(fileRepository.existsById(otherFile.getId()));
+        assertTrue(objectStorage.exists(otherFile.getStorageKey()));
+
+        mockMvc.perform(delete(path, scenarioId, identityKey, ownerId)
+                        .header(
+                                DocumentServiceIdentityFilter
+                                        .ENVIRONMENT_DATA_HEADER,
+                                ENVIRONMENT_DATA_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recordsAffected").value(0));
+    }
+
+    @Test
     void readinessAndRedactedOperationalMetricsCoverTheDocumentPath()
             throws Exception {
         String owner = "observability-owner@example.test";
@@ -593,5 +657,13 @@ class DocumentSecurityIntegrationTest {
 
     private static String authorization(String subject) {
         return "Bearer " + JWKS.validToken(subject);
+    }
+
+    private static UUID syntheticOwner(String scenarioId, String identityKey) {
+        return UUID.nameUUIDFromBytes(("job-seeker-copilot:system-data:"
+                + scenarioId
+                + ":"
+                + identityKey
+                + ":user").getBytes(StandardCharsets.UTF_8));
     }
 }

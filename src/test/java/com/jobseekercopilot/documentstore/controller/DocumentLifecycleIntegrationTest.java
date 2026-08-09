@@ -16,6 +16,7 @@ import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
 import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
+import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter;
@@ -47,11 +48,15 @@ class DocumentLifecycleIntegrationTest {
     @Autowired
     private GeneratedDocumentRepository repository;
 
+    @Autowired
+    private ExportedDocumentFileRepository fileRepository;
+
     @MockBean
     private ApplicationAssociationClient applicationAssociationClient;
 
     @BeforeEach
     void cleanDatabase() {
+        fileRepository.deleteAll();
         repository.deleteAll();
     }
 

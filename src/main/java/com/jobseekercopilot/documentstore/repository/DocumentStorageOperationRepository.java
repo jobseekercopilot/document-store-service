@@ -18,6 +18,10 @@ public interface DocumentStorageOperationRepository
     Optional<DocumentStorageOperation> findByOwnerIdAndOperationKey(
             String ownerId, String operationKey);
 
+    long countByOwnerId(String ownerId);
+
+    void deleteByOwnerId(String ownerId);
+
     boolean existsByStorageKeyAndState(String storageKey, StorageOperationState state);
 
     boolean existsByGeneratedDocumentIdAndState(

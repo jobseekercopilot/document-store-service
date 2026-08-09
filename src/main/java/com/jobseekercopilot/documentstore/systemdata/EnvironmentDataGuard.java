@@ -39,6 +39,15 @@ public class EnvironmentDataGuard {
         }
     }
 
+    public void requireRuntimeOwnerCleanup() {
+        requireEnabled();
+        if (!properties.isIsolatedDatabase()) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Runtime owner cleanup requires an isolated database");
+        }
+    }
+
     public String activeEnvironment() {
         String[] profiles = environment.getActiveProfiles();
         return profiles.length == 0 ? "default" : String.join(",", profiles);

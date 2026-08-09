@@ -9,7 +9,7 @@
     "license" : {
       "name" : "Proprietary and confidential"
     },
-    "version" : "4.0.0"
+    "version" : "4.1.0"
   },
   "servers" : [ {
     "url" : "http://localhost:8089",
@@ -203,22 +203,22 @@
               }
             }
           },
-          "413" : {
-            "description" : "Upload exceeds a configured safety limit",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "409" : {
             "description" : "Idempotency conflict",
             "content" : {
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          },
+          "413" : {
+            "description" : "Upload exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -394,22 +394,22 @@
               }
             }
           },
-          "409" : {
-            "description" : "Idempotency conflict",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/DocumentFileResponse"
-                }
-              }
-            }
-          },
           "413" : {
             "description" : "Decoded file or archive exceeds a configured safety limit",
             "content" : {
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Idempotency conflict",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentFileResponse"
                 }
               }
             }
@@ -489,6 +489,16 @@
           }
         },
         "responses" : {
+          "413" : {
+            "description" : "File or request envelope is too large",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "200" : {
             "description" : "Upload operation completed or replayed",
             "content" : {
@@ -511,16 +521,6 @@
           },
           "409" : {
             "description" : "Idempotency or rate conflict",
-            "content" : {
-              "application/json" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "413" : {
-            "description" : "File or request envelope is too large",
             "content" : {
               "application/json" : {
                 "schema" : {
@@ -925,6 +925,96 @@
           "required" : true,
           "schema" : {
             "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SystemDataResult"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "environmentDataToken" : [ ]
+        } ]
+      }
+    },
+    "/internal/system-data/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}" : {
+      "get" : {
+        "tags" : [ "document-store-system-data-controller" ],
+        "operationId" : "verifyRuntimeOwner",
+        "parameters" : [ {
+          "name" : "scenarioId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}",
+            "type" : "string"
+          }
+        }, {
+          "name" : "identityKey",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "[a-z0-9][a-z0-9-]{0,54}",
+            "type" : "string"
+          }
+        }, {
+          "name" : "userId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SystemDataResult"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "environmentDataToken" : [ ]
+        } ]
+      },
+      "delete" : {
+        "tags" : [ "document-store-system-data-controller" ],
+        "operationId" : "resetRuntimeOwner",
+        "parameters" : [ {
+          "name" : "scenarioId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}",
+            "type" : "string"
+          }
+        }, {
+          "name" : "identityKey",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "[a-z0-9][a-z0-9-]{0,54}",
+            "type" : "string"
+          }
+        }, {
+          "name" : "userId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
           }
         } ],
         "responses" : {

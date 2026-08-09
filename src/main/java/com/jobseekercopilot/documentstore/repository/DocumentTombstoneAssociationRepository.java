@@ -11,4 +11,6 @@ public interface DocumentTombstoneAssociationRepository
             UUID documentId);
 
     void deleteByDocumentIdIn(List<UUID> documentIds);
+
+    long countByDocumentIdIn(List<UUID> documentIds);
 }

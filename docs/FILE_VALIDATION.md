@@ -8,7 +8,8 @@ type is a claim, not proof of content.
 | Source | DOCX | PDF |
 | --- | --- | --- |
 | Approved generated-file producer | Allowed after validation | Allowed after validation |
-| User replacement upload | Allowed after validation | Rejected |
+| Legacy user replacement upload | Allowed after validation | Rejected |
+| Application-scoped secure upload | Allowed after validation and scan | Allowed after validation and scan |
 | Environment-data fixture | Same policy as its declared source | Same policy as its declared source |
 
 All other types are rejected. User replacement PDF is deliberately excluded:
@@ -65,8 +66,9 @@ external relationships and imported `altChunk`/object/control content.
 PDF must have a supported `%PDF-1.0` through `%PDF-1.7` or `%PDF-2.0` header
 and a terminal `%%EOF`. The private-beta generated-file path rejects obvious
 encryption, JavaScript, launch actions, embedded files and automatic actions.
-PDF is accepted only from an approved producer identity; browser replacement
-PDF is not accepted.
+PDF is accepted from the generated producer path or the producer-only secure
+application-upload path. The legacy browser replacement route remains DOCX
+only.
 
 Filenames reject blank or overlong values, Unicode normalization changes,
 control/format characters, path separators, drive/alternate-stream separators
@@ -87,20 +89,44 @@ SHA-256 and structural/type checks still run before bytes are returned. A
 failed integrity or safety check follows the established quarantine policy by
 marking the artifact inactive and `UNAVAILABLE` before returning `503`.
 
-## Malware-scanning decision and residual risk
+## Application upload quarantine and malware scanning
 
-No paid malware-scanning service is authorised for the private beta. The beta
-control is a narrow type/source allow-list plus bounded static inspection
-before persistence and again before download. This is not a claim of complete
-malware detection, a full PDF parser or safe rendering of arbitrary documents.
+The application-scoped upload route stores the exact original under a private
+`quarantine/` key before scanning. It uses a scanner interface whose
+private-beta implementation speaks the bounded ClamAV `INSTREAM` protocol.
+The scanner must return a supported clean verdict and a parseable signature
+timestamp no older than the configured maximum. Infected content is rejected;
+unavailable, stale, malformed or timed-out scanner responses fail closed and
+never create an approved version.
+
+After a clean verdict, PDFBox or the bounded DOCX XML reader extracts text with
+a timeout, page/entry/expanded-byte and character limit. Image-only PDFs are
+recorded truthfully as `NO_TEXT`. The service creates a draft, stores the exact
+original artifact, then atomically records the separate hashes and approves
+the document with the upload operation as `READY`. Cleanup removes quarantine
+objects immediately where possible and a bounded reconciler retries retained
+quarantine references or fails stale processing operations closed.
+
+The private-beta defaults are 100 retained families, 20 versions per family,
+500 MiB of retained uploaded originals per owner and 20 upload attempts per
+60-second owner window.
+
+## Scanner decision and residual risk
+
+No paid malware-scanning service is authorised for the private beta. The
+approved implementation is pinned containerised ClamAV behind the engine
+interface plus the narrow type/source allow-list and bounded structural
+inspection. This is not a claim of complete malware detection or safe rendering
+of arbitrary documents.
 
 Production access must remain private and owner scoped. Operators should mark
 a suspect record unavailable, preserve only approved synthetic incident
 evidence, rotate affected credentials when exposure is possible, and follow
 the storage incident procedure in
-[`STORAGE_OPERATIONS.md`](STORAGE_OPERATIONS.md). Adding a scanner later
-requires an explicit privacy, retention, regional-processing, availability and
-cost decision.
+[`STORAGE_OPERATIONS.md`](STORAGE_OPERATIONS.md). Selecting a hosted scanner
+later requires an explicit privacy, retention, regional-processing,
+availability and cost decision; the engine interface is the extension point
+and no hosted provider is selected here.
 
 ## User-visible outcomes
 

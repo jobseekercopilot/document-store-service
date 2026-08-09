@@ -43,7 +43,7 @@ remain required.
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-3.4.0 contract. It includes content-free paged family summaries, newest-first
+4.0.0 contract. It includes content-free paged family summaries, newest-first
 server-numbered history, safe exact-artifact manifests and a concurrency- and
 idempotency-protected explicit current-pointer command. Approval and current
 selection are independent. Exact retained artifacts can be downloaded through
@@ -68,6 +68,14 @@ activity feed for version creation, successful download, current-version
 changes, archive and restore. Command replays and state-preserving no-ops do not
 create duplicate activity, and the activity rows follow the approved 365-day
 lifecycle-audit retention policy.
+
+Version 4.0.0 adds producer-only, application-scoped PDF/DOCX uploads. Each
+operation durably moves through quarantine, mandatory ClamAV scanning,
+bounded deterministic extraction and atomic publication. Only a clean
+`READY` operation exposes an approved immutable version and exact original
+artifact. Original-byte and normalised-text SHA-256 values remain distinct;
+uploads do not call Payment, CV/Letter Service, OpenAI or another public
+scanner.
 
 The identity sources, least-privilege service roles, authorization matrix,
 stable denial rules and deployment dependencies are defined in

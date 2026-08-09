@@ -94,6 +94,14 @@ public class DocumentFileValidator {
         validate(fileType, fileName, declaredMimeType, content, true);
     }
 
+    public void validateApplicationUpload(
+            FileType fileType,
+            String fileName,
+            String declaredMimeType,
+            byte[] content) {
+        validate(fileType, fileName, declaredMimeType, content, true);
+    }
+
     public void validateStored(FileType fileType, byte[] content) {
         validateContent(fileType, content);
     }

@@ -48,6 +48,18 @@ public interface GeneratedDocumentRepository extends JpaRepository<GeneratedDocu
 
     long countByDocumentFamilyIdAndUserId(UUID documentFamilyId, String userId);
 
+    @Query("select count(distinct document.documentFamilyId) from GeneratedDocument document "
+            + "where document.userId = :ownerId and document.retentionState <> "
+            + "com.jobseekercopilot.documentstore.entity.DocumentRetentionState.PURGED")
+    long countRetainedFamilies(@Param("ownerId") String ownerId);
+
+    @Query("select coalesce(sum(document.originalContentSize), 0) from GeneratedDocument document "
+            + "where document.userId = :ownerId and document.sourceType = "
+            + "com.jobseekercopilot.documentstore.entity.DocumentSourceType.UPLOADED "
+            + "and document.retentionState <> "
+            + "com.jobseekercopilot.documentstore.entity.DocumentRetentionState.PURGED")
+    long sumRetainedUploadedOriginalBytes(@Param("ownerId") String ownerId);
+
     @Query(
             value = """
                     select document

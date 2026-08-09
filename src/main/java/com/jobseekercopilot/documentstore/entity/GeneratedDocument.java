@@ -71,6 +71,19 @@ public class GeneratedDocument {
     @Column(length = 64)
     private String contentSha256;
 
+    @Column(length = 64)
+    private String originalContentSha256;
+
+    private Long originalContentSize;
+
+    private UUID originalArtifactId;
+
+    @Enumerated(EnumType.STRING)
+    private FileType originalFileType;
+
+    @Enumerated(EnumType.STRING)
+    private DocumentExtractionState extractionState;
+
     @Embedded
     private GenerationProvenance generationProvenance;
 

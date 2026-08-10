@@ -87,17 +87,6 @@ public class DocumentStoreSystemDataController {
         return resetDocumentsForOwner(scenarioId, userId, Map.of());
     }
 
-    @Transactional
-    @DeleteMapping("/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
-    public ResponseEntity<SystemDataResult> resetRuntimeOwner(
-            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}") String scenarioId,
-            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}") String identityKey,
-            @PathVariable UUID userId) {
-        guard.requireRuntimeOwnerCleanup();
-        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
-        return resetDocumentsForOwner(scenarioId, userId.toString(), Map.of("identityKey", identityKey));
-    }
-
     private ResponseEntity<SystemDataResult> resetDocumentsForOwner(
             String scenarioId, String userId, Map<String, Object> extraDetails) {
         List<GeneratedDocument> documents = documentRepository.findByUserId(userId);
@@ -174,17 +163,6 @@ public class DocumentStoreSystemDataController {
     public ResponseEntity<SystemDataResult> verifyDocuments(@PathVariable String userId) {
         guard.requireEnabled();
         return verifyDocumentsForOwner(userId, Map.of());
-    }
-
-    @GetMapping("/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
-    public ResponseEntity<SystemDataResult> verifyRuntimeOwner(
-            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}") String scenarioId,
-            @PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}") String identityKey,
-            @PathVariable UUID userId) {
-        guard.requireRuntimeOwnerCleanup();
-        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
-        return verifyDocumentsForOwner(
-                userId.toString(), Map.of("scenarioId", scenarioId, "identityKey", identityKey));
     }
 
     private ResponseEntity<SystemDataResult> verifyDocumentsForOwner(

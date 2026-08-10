@@ -33,7 +33,7 @@ public class DocumentStoreMetrics {
     private static final Logger log =
             LoggerFactory.getLogger(DocumentStoreMetrics.class);
 
-    private static final Set<String> RESOURCES = Set.of("document", "file");
+    private static final Set<String> RESOURCES = Set.of("document", "file", "upload");
     private static final Set<String> OPERATIONS = Set.of(
             "create",
             "retrieve",
@@ -42,6 +42,10 @@ public class DocumentStoreMetrics {
             "activate",
             "deactivate",
             "store_export",
+            "store_upload",
+            "process_upload",
+            "retrieve_upload",
+            "cleanup_upload",
             "replace_export",
             "retrieve_export",
             "list_export");
@@ -72,6 +76,8 @@ public class DocumentStoreMetrics {
     private static final Set<String> ROUTES = Set.of(
             "/api/v1/documents/**",
             "/api/v1/document-files/**",
+            "/api/v1/application-document-uploads/**",
+            "/api/v1/applications/*/documents/*/uploads",
             "/internal/system-data/**",
             "/v3/api-docs/**",
             "/swagger-ui/**",

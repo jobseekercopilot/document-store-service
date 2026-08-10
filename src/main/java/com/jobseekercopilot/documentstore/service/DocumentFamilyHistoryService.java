@@ -8,8 +8,10 @@ import com.jobseekercopilot.documentstore.dto.DocumentFamilyHistoryResponse;
 import com.jobseekercopilot.documentstore.dto.DocumentFamilyPageResponse;
 import com.jobseekercopilot.documentstore.dto.DocumentFamilySummary;
 import com.jobseekercopilot.documentstore.dto.DocumentVersionHistoryItem;
+import com.jobseekercopilot.documentstore.dto.DocumentTombstoneAssociationResponse;
 import com.jobseekercopilot.documentstore.dto.ExpectedCurrentState;
 import com.jobseekercopilot.documentstore.dto.SelectFamilyCurrentRequest;
+import com.jobseekercopilot.documentstore.entity.DocumentActivityType;
 import com.jobseekercopilot.documentstore.entity.DocumentCurrentCommand;
 import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
@@ -23,6 +25,7 @@ import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
 import com.jobseekercopilot.documentstore.repository.DocumentCurrentCommandRepository;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.repository.DocumentTombstoneAssociationRepository;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -44,8 +47,11 @@ public class DocumentFamilyHistoryService {
     private final GeneratedDocumentRepository documentRepository;
     private final ExportedDocumentFileRepository fileRepository;
     private final DocumentCurrentCommandRepository currentCommandRepository;
+    private final DocumentTombstoneAssociationRepository
+            tombstoneAssociationRepository;
     private final DocumentOperationLock operationLock;
     private final DocumentStoreMetrics metrics;
+    private final DocumentActivityService activityService;
 
     @Transactional(readOnly = true)
     public DocumentFamilyPageResponse listFamilies(String ownerId, int page, int size) {
@@ -175,11 +181,22 @@ public class DocumentFamilyHistoryService {
         requireExpectedCurrent(request, actualCurrent);
         requireEligible(requested);
 
-        if (actualCurrent == null || !actualCurrent.getId().equals(requested.getId())) {
+        boolean changed = actualCurrent == null
+                || !actualCurrent.getId().equals(requested.getId());
+        if (changed) {
             currentVersions.forEach(current -> current.setActive(false));
             documentRepository.saveAllAndFlush(currentVersions);
             requested.setActive(true);
             requested = documentRepository.saveAndFlush(requested);
+            activityService.recordOnce(
+                    "current:" + OperationFingerprint.sha256(
+                            ownerId, idempotencyKey),
+                    DocumentActivityType.DOCUMENT_CURRENT_VERSION_CHANGED,
+                    requested,
+                    actualCurrent == null
+                            ? "FIRST_CURRENT_SELECTED"
+                            : "CURRENT_CHANGED",
+                    LocalDateTime.now());
         }
 
         DocumentCurrentCommand command = currentCommandRepository.saveAndFlush(
@@ -234,8 +251,22 @@ public class DocumentFamilyHistoryService {
                 utc(version.getArchivedAt()),
                 utc(version.getDeletedAt()),
                 utc(version.getPurgeEligibleAt()),
+                utc(version.getPurgedAt()),
+                version.getUnavailableReason(),
                 utc(version.getCreatedAt()),
                 utc(version.getUpdatedAt()),
+                tombstoneAssociationRepository
+                        .findByDocumentIdOrderByApplicationIdAsc(
+                                version.getId())
+                        .stream()
+                        .map(association ->
+                                new DocumentTombstoneAssociationResponse(
+                                        association.getApplicationId(),
+                                        association.getDocumentType(),
+                                        association.getAssociationState(),
+                                        association.getApplicationStatus(),
+                                        utc(association.getFrozenAt())))
+                        .toList(),
                 artifacts.stream().map(this::artifact).toList());
     }
 

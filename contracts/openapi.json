@@ -9,7 +9,7 @@
     "license" : {
       "name" : "Proprietary and confidential"
     },
-    "version" : "3.1.0"
+    "version" : "4.1.0"
   },
   "servers" : [ {
     "url" : "http://localhost:8089",
@@ -193,16 +193,6 @@
           }
         },
         "responses" : {
-          "413" : {
-            "description" : "Upload exceeds a configured safety limit",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "404" : {
             "description" : "Generated document not found",
             "content" : {
@@ -219,6 +209,16 @@
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          },
+          "413" : {
+            "description" : "Upload exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -364,16 +364,6 @@
           "required" : true
         },
         "responses" : {
-          "413" : {
-            "description" : "Decoded file or archive exceeds a configured safety limit",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "404" : {
             "description" : "Generated document not found",
             "content" : {
@@ -404,12 +394,137 @@
               }
             }
           },
+          "413" : {
+            "description" : "Decoded file or archive exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "409" : {
             "description" : "Idempotency conflict",
             "content" : {
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/api/v1/applications/{applicationId}/documents/{documentType}/uploads" : {
+      "post" : {
+        "tags" : [ "Application document uploads" ],
+        "summary" : "Store one secure application-scoped uploaded document version",
+        "description" : "Quarantines, validates, malware-scans and extracts one PDF or DOCX before publishing an approved immutable version. This route has no AI Credit, Payment, CV/Letter Service or LLM dependency.",
+        "operationId" : "upload",
+        "parameters" : [ {
+          "name" : "applicationId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "documentType",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "enum" : [ "CV", "COVER_LETTER" ]
+          }
+        }, {
+          "name" : "jobId",
+          "in" : "query",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "fileType",
+          "in" : "query",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "enum" : [ "DOCX", "PDF" ]
+          }
+        }, {
+          "name" : "Idempotency-Key",
+          "in" : "header",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "description" : "Required owner context for the approved producer identity",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "multipart/form-data" : {
+              "schema" : {
+                "required" : [ "file" ],
+                "type" : "object",
+                "properties" : {
+                  "file" : {
+                    "type" : "string",
+                    "format" : "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses" : {
+          "413" : {
+            "description" : "File or request envelope is too large",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "200" : {
+            "description" : "Upload operation completed or replayed",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ApplicationDocumentUploadResponse"
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "Malformed upload context",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Idempotency or rate conflict",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -810,6 +925,96 @@
           "required" : true,
           "schema" : {
             "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SystemDataResult"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "environmentDataToken" : [ ]
+        } ]
+      }
+    },
+    "/internal/system-data/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}" : {
+      "get" : {
+        "tags" : [ "document-store-system-data-controller" ],
+        "operationId" : "verifyRuntimeOwner",
+        "parameters" : [ {
+          "name" : "scenarioId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}",
+            "type" : "string"
+          }
+        }, {
+          "name" : "identityKey",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "[a-z0-9][a-z0-9-]{0,54}",
+            "type" : "string"
+          }
+        }, {
+          "name" : "userId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SystemDataResult"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "environmentDataToken" : [ ]
+        } ]
+      },
+      "delete" : {
+        "tags" : [ "document-store-system-data-controller" ],
+        "operationId" : "resetRuntimeOwner",
+        "parameters" : [ {
+          "name" : "scenarioId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}",
+            "type" : "string"
+          }
+        }, {
+          "name" : "identityKey",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "[a-z0-9][a-z0-9-]{0,54}",
+            "type" : "string"
+          }
+        }, {
+          "name" : "userId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
           }
         } ],
         "responses" : {
@@ -1438,6 +1643,28 @@
         } ]
       }
     },
+    "/api/v1/documents/account-export" : {
+      "get" : {
+        "tags" : [ "document-account-lifecycle-controller" ],
+        "summary" : "Export current owner's document data",
+        "operationId" : "export",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentPersonalDataExport"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        } ]
+      }
+    },
     "/api/v1/document-files/{id}" : {
       "get" : {
         "tags" : [ "Document Files" ],
@@ -1582,6 +1809,107 @@
                     "type" : "string",
                     "format" : "byte"
                   }
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        }, {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/api/v1/document-activity" : {
+      "get" : {
+        "tags" : [ "document-activity-controller" ],
+        "summary" : "Page owner-scoped content-free document activity",
+        "description" : "Returns only safe document family, type, source, trusted version, result and time metadata",
+        "operationId" : "list",
+        "parameters" : [ {
+          "name" : "page",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "default" : 0
+          }
+        }, {
+          "name" : "size",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "default" : 100
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentActivityPageResponse"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "bearerAuth" : [ ]
+        }, {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/api/v1/application-document-uploads/{operationId}" : {
+      "get" : {
+        "tags" : [ "Application document uploads" ],
+        "summary" : "Get owner-scoped application upload status",
+        "operationId" : "get",
+        "parameters" : [ {
+          "name" : "operationId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Upload status found",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ApplicationDocumentUploadResponse"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Upload status not found",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ApplicationDocumentUploadResponse"
                 }
               }
             }
@@ -1782,10 +2110,29 @@
           },
           "retentionState" : {
             "type" : "string",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "contentSha256" : {
             "type" : "string"
+          },
+          "originalContentSha256" : {
+            "type" : "string"
+          },
+          "originalContentSize" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "originalArtifactId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "originalFileType" : {
+            "type" : "string",
+            "enum" : [ "DOCX", "PDF" ]
+          },
+          "extractionState" : {
+            "type" : "string",
+            "enum" : [ "SUCCEEDED", "NO_TEXT" ]
           },
           "generationProvenance" : {
             "$ref" : "#/components/schemas/GenerationProvenance"
@@ -1829,6 +2176,13 @@
           "purgeEligibleAt" : {
             "type" : "string",
             "format" : "date-time"
+          },
+          "purgedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "unavailableReason" : {
+            "type" : "string"
           },
           "legalHold" : {
             "type" : "boolean"
@@ -2047,7 +2401,7 @@
             "type" : "string"
           },
           "claims" : {
-            "maxItems" : 40,
+            "maxItems" : 200,
             "minItems" : 0,
             "type" : "array",
             "items" : {
@@ -2287,11 +2641,31 @@
           "retentionState" : {
             "type" : "string",
             "description" : "Recoverable retention state",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "contentSha256" : {
             "type" : "string",
             "description" : "SHA-256 of the stored text content"
+          },
+          "originalContentSha256" : {
+            "type" : "string",
+            "description" : "SHA-256 of the exact uploaded original bytes"
+          },
+          "originalContentSize" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "originalArtifactId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "originalFileType" : {
+            "type" : "string",
+            "enum" : [ "DOCX", "PDF" ]
+          },
+          "extractionState" : {
+            "type" : "string",
+            "enum" : [ "SUCCEEDED", "NO_TEXT" ]
           },
           "generationMetadata" : {
             "$ref" : "#/components/schemas/GenerationMetadata"
@@ -2332,6 +2706,15 @@
             "type" : "string",
             "description" : "Earliest time an authorized purge may be considered",
             "format" : "date-time"
+          },
+          "purgedAt" : {
+            "type" : "string",
+            "description" : "Timestamp when content was irreversibly purged and this response became a minimal tombstone",
+            "format" : "date-time"
+          },
+          "unavailableReason" : {
+            "type" : "string",
+            "description" : "Stable content-free reason exact document bytes are unavailable"
           },
           "legalHold" : {
             "type" : "boolean"
@@ -2528,6 +2911,70 @@
         },
         "description" : "Request to store an exported document file"
       },
+      "ApplicationDocumentUploadResponse" : {
+        "type" : "object",
+        "properties" : {
+          "operationId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "jobId" : {
+            "type" : "string"
+          },
+          "applicationId" : {
+            "type" : "string"
+          },
+          "documentType" : {
+            "type" : "string",
+            "enum" : [ "CV", "COVER_LETTER" ]
+          },
+          "fileType" : {
+            "type" : "string",
+            "enum" : [ "DOCX", "PDF" ]
+          },
+          "state" : {
+            "type" : "string",
+            "enum" : [ "RECEIVED", "QUARANTINED", "SCANNING", "SCANNED_CLEAN", "EXTRACTING", "READY", "REJECTED", "FAILED", "SCAN_UNAVAILABLE" ]
+          },
+          "originalSha256" : {
+            "type" : "string"
+          },
+          "originalSize" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "extractedTextSha256" : {
+            "type" : "string"
+          },
+          "extractionState" : {
+            "type" : "string",
+            "enum" : [ "SUCCEEDED", "NO_TEXT" ]
+          },
+          "documentId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "artifactId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "failureCode" : {
+            "type" : "string"
+          },
+          "failureMessage" : {
+            "type" : "string"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "updatedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        },
+        "description" : "Content-free status for one application-scoped upload operation"
+      },
       "LegalHoldRequest" : {
         "required" : [ "reference" ],
         "type" : "object",
@@ -2616,6 +3063,29 @@
           "contentSha256" : {
             "type" : "string"
           },
+          "originalContentSha256" : {
+            "type" : "string"
+          },
+          "originalContentSize" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "originalArtifactId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "originalFileType" : {
+            "type" : "string",
+            "enum" : [ "DOCX", "PDF" ]
+          },
+          "extractionState" : {
+            "type" : "string",
+            "enum" : [ "SUCCEEDED", "NO_TEXT" ]
+          },
+          "sourceType" : {
+            "type" : "string",
+            "enum" : [ "GENERATED", "UPLOADED" ]
+          },
           "lifecycleState" : {
             "type" : "string",
             "enum" : [ "DRAFT", "APPROVED" ]
@@ -2661,11 +3131,11 @@
           },
           "fromState" : {
             "type" : "string",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "toState" : {
             "type" : "string",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "actorId" : {
             "type" : "string"
@@ -2739,7 +3209,7 @@
           },
           "latestRetention" : {
             "type" : "string",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "currentDocumentId" : {
             "type" : "string",
@@ -2837,6 +3307,30 @@
         },
         "description" : "Owner-scoped newest-first history for one document family"
       },
+      "DocumentTombstoneAssociationResponse" : {
+        "type" : "object",
+        "properties" : {
+          "applicationId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "documentType" : {
+            "type" : "string",
+            "enum" : [ "CV", "COVER_LETTER" ]
+          },
+          "associationState" : {
+            "type" : "string",
+            "enum" : [ "DRAFT_SELECTED", "FROZEN_USED" ]
+          },
+          "applicationStatus" : {
+            "type" : "string"
+          },
+          "frozenAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
       "DocumentVersionHistoryItem" : {
         "type" : "object",
         "properties" : {
@@ -2861,7 +3355,7 @@
           },
           "retention" : {
             "type" : "string",
-            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED" ]
+            "enum" : [ "AVAILABLE", "ARCHIVED", "DELETED", "PURGED" ]
           },
           "current" : {
             "type" : "boolean"
@@ -2882,6 +3376,13 @@
             "type" : "string",
             "format" : "date-time"
           },
+          "purgedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "unavailableReason" : {
+            "type" : "string"
+          },
           "createdAt" : {
             "type" : "string",
             "format" : "date-time"
@@ -2889,6 +3390,12 @@
           "updatedAt" : {
             "type" : "string",
             "format" : "date-time"
+          },
+          "applicationAssociations" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/DocumentTombstoneAssociationResponse"
+            }
           },
           "artifacts" : {
             "type" : "array",
@@ -2898,6 +3405,103 @@
           }
         },
         "description" : "Content-free metadata for one immutable server-numbered document version"
+      },
+      "DocumentPersonalDataExport" : {
+        "type" : "object",
+        "properties" : {
+          "schemaVersion" : {
+            "type" : "string"
+          },
+          "generatedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "documents" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/GeneratedDocumentResponse"
+            }
+          },
+          "files" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/DocumentFileResponse"
+            }
+          },
+          "lifecycleEvents" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/DocumentLifecycleEventResponse"
+            }
+          }
+        }
+      },
+      "DocumentActivityEventResponse" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "eventType" : {
+            "type" : "string",
+            "enum" : [ "DOCUMENT_VERSION_CREATED", "DOCUMENT_VERSION_DOWNLOADED", "DOCUMENT_CURRENT_VERSION_CHANGED", "DOCUMENT_VERSION_ARCHIVED", "DOCUMENT_VERSION_RESTORED", "DOCUMENT_UPLOADED" ]
+          },
+          "documentId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "documentFamilyId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "documentType" : {
+            "type" : "string",
+            "enum" : [ "CV", "COVER_LETTER" ]
+          },
+          "source" : {
+            "type" : "string",
+            "enum" : [ "GENERATED", "UPLOADED" ]
+          },
+          "version" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "result" : {
+            "type" : "string"
+          },
+          "occurredAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "DocumentActivityPageResponse" : {
+        "type" : "object",
+        "properties" : {
+          "items" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/DocumentActivityEventResponse"
+            }
+          },
+          "page" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "size" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "totalElements" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "totalPages" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
       }
     },
     "securitySchemes" : {

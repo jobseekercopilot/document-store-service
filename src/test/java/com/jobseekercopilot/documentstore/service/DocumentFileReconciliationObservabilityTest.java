@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mock;
 
 import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
 import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
@@ -62,7 +63,8 @@ class DocumentFileReconciliationObservabilityTest {
                 fileValidator,
                 operationLock,
                 new DocumentStoreMetrics(registry),
-                storageOperationJournal);
+                storageOperationJournal,
+                mock(DocumentActivityService.class));
     }
 
     @Test

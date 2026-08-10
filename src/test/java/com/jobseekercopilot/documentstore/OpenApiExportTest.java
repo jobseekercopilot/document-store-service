@@ -2,6 +2,7 @@ package com.jobseekercopilot.documentstore;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterAll;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,7 +57,81 @@ class OpenApiExportTest {
                 .getContentAsString();
         var generated = objectMapper.readTree(specification);
 
-        assertEquals("3.1.0", generated.at("/info/version").asText());
+        assertEquals("4.1.0", generated.at("/info/version").asText());
+        var upload = generated.at(
+                "/paths/~1api~1v1~1applications~1{applicationId}~1documents~1{documentType}~1uploads/post");
+        assertTrue(upload.isObject());
+        assertTrue(upload.at("/requestBody/content/multipart~1form-data").isObject());
+        assertTrue(upload.at("/security/0/serviceToken").isArray());
+        assertTrue(generated.at(
+                "/paths/~1api~1v1~1application-document-uploads~1{operationId}/get").isObject());
+        var uploadState = generated.at(
+                "/components/schemas/ApplicationDocumentUploadResponse/properties/state/enum");
+        for (String state : new String[] {
+                "RECEIVED",
+                "QUARANTINED",
+                "SCANNING",
+                "SCANNED_CLEAN",
+                "EXTRACTING",
+                "READY",
+                "REJECTED",
+                "FAILED",
+                "SCAN_UNAVAILABLE"
+        }) {
+            assertTrue(uploadState.toString().contains("\"" + state + "\""));
+        }
+        assertTrue(generated.at(
+                "/paths/~1api~1v1~1document-activity/get").isObject());
+        var activity = generated.at(
+                "/components/schemas/DocumentActivityEventResponse/properties");
+        assertTrue(activity.path("eventType").isObject());
+        assertTrue(activity.path("documentFamilyId").isObject());
+        assertTrue(activity.path("version").isObject());
+        assertTrue(activity.path("occurredAt").isObject());
+        assertTrue(activity.path("content").isMissingNode());
+        assertTrue(activity.path("fileName").isMissingNode());
+        assertTrue(activity.path("contentSha256").isMissingNode());
+        assertTrue(activity.path("scannerDetails").isMissingNode());
+        assertTrue(activity.path("notes").isMissingNode());
+        assertTrue(generated.at(
+                        "/components/schemas/GeneratedDocumentResponse/properties")
+                .has("purgedAt"));
+        assertTrue(generated.at(
+                        "/components/schemas/GeneratedDocumentResponse/properties")
+                .has("unavailableReason"));
+        var generatedDocument = generated.at(
+                "/components/schemas/GeneratedDocumentResponse/properties");
+        for (String property : new String[] {
+                "originalContentSha256",
+                "originalContentSize",
+                "originalArtifactId",
+                "originalFileType",
+                "extractionState",
+                "sourceType"
+        }) {
+            assertTrue(generatedDocument.has(property));
+        }
+        var documentReference = generated.at(
+                "/components/schemas/DocumentReferenceResponse/properties");
+        for (String property : new String[] {
+                "originalContentSha256",
+                "originalContentSize",
+                "originalArtifactId",
+                "originalFileType",
+                "extractionState",
+                "sourceType"
+        }) {
+            assertTrue(documentReference.has(property));
+        }
+        assertTrue(generated.at(
+                        "/components/schemas/DocumentVersionHistoryItem/properties")
+                .has("applicationAssociations"));
+        assertTrue(generated.at(
+                        "/components/schemas/DocumentTombstoneAssociationResponse/properties")
+                .has("associationState"));
+        assertFalse(generated.at(
+                        "/components/schemas/DocumentTombstoneAssociationResponse/properties")
+                .has("contentSha256"));
         assertEquals(
                 "downloadDocumentArtifact",
                 generated.at("/paths/~1api~1v1~1documents~1{generatedDocumentId}~1artifacts~1{artifactId}~1download/get/operationId")

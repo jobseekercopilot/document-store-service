@@ -3,7 +3,9 @@ package com.jobseekercopilot.documentstore.service;
 import com.jobseekercopilot.documentstore.dto.CreateDocumentFileRequest;
 import com.jobseekercopilot.documentstore.dto.DocumentFileDownload;
 import com.jobseekercopilot.documentstore.dto.DocumentFileResponse;
+import com.jobseekercopilot.documentstore.entity.DocumentActivityType;
 import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
+import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.FileType;
@@ -43,6 +45,7 @@ public class DocumentFileService {
     private final DocumentOperationLock operationLock;
     private final DocumentStoreMetrics metrics;
     private final DocumentStorageOperationJournal storageOperationJournal;
+    private final DocumentActivityService activityService;
 
     @Transactional
     public DocumentFileResponse createDocumentFile(
@@ -146,6 +149,40 @@ public class DocumentFileService {
         }
     }
 
+    @Transactional
+    public DocumentFileResponse storeApplicationUploadArtifact(
+            String ownerId,
+            UUID generatedDocumentId,
+            FileType fileType,
+            String originalFileName,
+            String declaredMimeType,
+            byte[] content,
+            String requestedOperationKey) {
+        return metrics.observe(
+                "file",
+                "store_upload",
+                null,
+                fileType,
+                () -> {
+                    requireOwnedMutableDocument(ownerId, generatedDocumentId);
+                    fileValidator.validateApplicationUpload(
+                            fileType,
+                            originalFileName,
+                            declaredMimeType,
+                            content);
+                    ExportedDocumentFile saved = storeMetadataAndObject(
+                            ownerId,
+                            generatedDocumentId,
+                            fileType,
+                            FileSource.USER_UPLOADED,
+                            content,
+                            requestedOperationKey);
+                    metrics.recordPayload(
+                            "file", "stored", null, fileType, content.length);
+                    return mapToResponse(saved);
+                });
+    }
+
     public DocumentFileResponse getDocumentFileMetadata(String ownerId, UUID id) {
         return metrics.observe(
                 "file",
@@ -183,8 +220,9 @@ public class DocumentFileService {
                 .findByIdAndOwnerIdAndGeneratedDocument_UserId(
                         id, ownerId, ownerId)
                 .orElseThrow(ResourceNotFoundException::documentFileNotFound);
-        requireOwnedDownloadableDocument(ownerId, file.getGeneratedDocumentId());
-        return downloadRetainedFile(file);
+        GeneratedDocument document = requireOwnedDownloadableDocument(
+                ownerId, file.getGeneratedDocumentId());
+        return downloadAndRecord(file, document);
     }
 
     private DocumentFileDownload downloadDocumentArtifactInternal(
@@ -198,8 +236,20 @@ public class DocumentFileService {
                         ownerId,
                         ownerId)
                 .orElseThrow(ResourceNotFoundException::documentFileNotFound);
-        requireOwnedDownloadableDocument(ownerId, generatedDocumentId);
-        return downloadRetainedFile(file);
+        GeneratedDocument document = requireOwnedDownloadableDocument(
+                ownerId, generatedDocumentId);
+        return downloadAndRecord(file, document);
+    }
+
+    private DocumentFileDownload downloadAndRecord(
+            ExportedDocumentFile file, GeneratedDocument document) {
+        DocumentFileDownload download = downloadRetainedFile(file);
+        activityService.record(
+                DocumentActivityType.DOCUMENT_VERSION_DOWNLOADED,
+                document,
+                document.isActive() ? "CURRENT_VERSION" : "PREVIOUS_VERSION",
+                LocalDateTime.now());
+        return download;
     }
 
     private DocumentFileDownload downloadRetainedFile(ExportedDocumentFile file) {
@@ -249,7 +299,7 @@ public class DocumentFileService {
         return file;
     }
 
-    private void requireOwnedDownloadableDocument(
+    private GeneratedDocument requireOwnedDownloadableDocument(
             String ownerId, UUID generatedDocumentId) {
         var document = documentRepository.findByIdAndUserId(generatedDocumentId, ownerId)
                 .orElseThrow(ResourceNotFoundException::documentFileNotFound);
@@ -257,6 +307,7 @@ public class DocumentFileService {
                 && document.getRetentionState() != DocumentRetentionState.ARCHIVED) {
             throw ResourceNotFoundException.documentFileNotFound();
         }
+        return document;
     }
 
     public List<DocumentFileResponse> getFilesForDocument(String ownerId, UUID generatedDocumentId) {

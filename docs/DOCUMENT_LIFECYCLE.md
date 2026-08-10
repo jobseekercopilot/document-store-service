@@ -38,7 +38,7 @@ details.
 | `AVAILABLE` | The version is retained and may be used according to its approval state | `ARCHIVED`, `DELETED` | Read and mutation allowed |
 | `ARCHIVED` | Recoverable and not current; retained outside the normal active journey | `AVAILABLE`, `DELETED` | Existing files remain readable; mutation and application reference are blocked |
 | `DELETED` | Soft deleted and recoverable until the configured deadline | `AVAILABLE`, eventual purge | Text and files remain stored; file access and mutation are blocked |
-| Purged | No document row, content or file remains; only bounded lifecycle audit remains | None | Irreversible |
+| `PURGED` | Minimal owner-visible version tombstone; no content, file, filename, complete hash or evidence payload remains | None | Irreversible |
 
 Archive, restore and soft delete are owner-scoped and idempotent:
 
@@ -63,7 +63,11 @@ lifecycle event; reuse of the operation ID with a changed payload returns
 
 An archived or deleted version cannot be approved, selected as current,
 referenced for a new application, or receive a new exported file. Application
-history is not rewritten when a version is archived or soft deleted.
+history is not rewritten when a version is archived or soft deleted. Every
+transition is projected to Application Tracker before Store mutation. If
+association or projection evidence is unavailable, the operation fails and the
+local document remains unchanged. A purged projection retains exact
+family/version identity without requiring a complete content hash.
 
 Irreversible purge is a distinct retention-administrator operation. It is
 disabled by default and stays disabled unless both an explicit enable flag and
@@ -87,9 +91,8 @@ old `active` flag. Migration V6 marks existing documents `AVAILABLE`; it does
 not infer archive, deletion or legal-hold state. A user or approved
 orchestration flow must explicitly approve or transition an eligible version.
 
-The remaining cross-service rollout is owned by DOCGEN-14, DOCGEN-16, APP-08
-and Infrastructure. Generated withdrawal cleanup is now atomic and replay-safe.
-Document Store still cannot prove that every Application Tracker reference is
-reflected in its local `applicationId`; replacement and link reconciliation
-remain APP-08 work, and purge therefore stays fail-closed until that integration
-has been demonstrated.
+The remaining production rollout is owned by Infrastructure. Generated
+withdrawal cleanup is atomic and replay-safe; authoritative association lookup
+does not rely on Store's legacy `applicationId`. Production purge remains
+disabled until backup, object-version and log expiry plus the administrator
+deployment process are evidenced.

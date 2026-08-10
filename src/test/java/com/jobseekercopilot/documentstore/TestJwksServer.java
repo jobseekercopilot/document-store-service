@@ -151,6 +151,11 @@ public final class TestJwksServer implements AutoCloseable {
                 "refresh");
     }
 
+    public String accountLifecycleToken(String subject, String operationId) {
+        return token(active, ACTIVE_KEY_ID, JWSAlgorithm.RS256, ISSUER, AUDIENCE,
+                subject, Instant.now().plusSeconds(300), "account_lifecycle", operationId);
+    }
+
     public String missingSubjectToken() {
         return token(
                 active,
@@ -181,9 +186,23 @@ public final class TestJwksServer implements AutoCloseable {
             String subject,
             Instant expiresAt,
             String tokenType) {
+        return token(pair, keyId, algorithm, issuer, audience, subject, expiresAt,
+                tokenType, null);
+    }
+
+    private static String token(
+            KeyPair pair,
+            String keyId,
+            JWSAlgorithm algorithm,
+            String issuer,
+            String audience,
+            String subject,
+            Instant expiresAt,
+            String tokenType,
+            String operationId) {
         try {
             Instant now = Instant.now();
-            JWTClaimsSet claims = new JWTClaimsSet.Builder()
+            JWTClaimsSet.Builder builder = new JWTClaimsSet.Builder()
                     .issuer(issuer)
                     .audience(audience)
                     .subject(subject)
@@ -191,8 +210,11 @@ public final class TestJwksServer implements AutoCloseable {
                     .issueTime(Date.from(now.minusSeconds(5)))
                     .expirationTime(Date.from(expiresAt))
                     .claim("sid", "test-session")
-                    .claim("token_type", tokenType)
-                    .build();
+                    .claim("token_type", tokenType);
+            if (operationId != null) {
+                builder.claim("operation_id", operationId);
+            }
+            JWTClaimsSet claims = builder.build();
             SignedJWT jwt = new SignedJWT(
                     new JWSHeader.Builder(algorithm).keyID(keyId).build(),
                     claims);

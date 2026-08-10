@@ -79,14 +79,24 @@ public class DocumentSecurityConfig {
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers("/internal/system-data/**")
                         .hasAuthority(DocumentAuthorities.ENVIRONMENT_DATA)
+                        .requestMatchers("/internal/account-lifecycle/**")
+                        .hasAuthority(DocumentAuthorities.ACCOUNT_LIFECYCLE)
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
                         .authenticated()
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/v1/documents/account-export")
+                        .hasAuthority(DocumentAuthorities.USER)
                         .requestMatchers(HttpMethod.GET, "/api/v1/**")
                         .hasAnyAuthority(
                                 DocumentAuthorities.USER,
                                 DocumentAuthorities.PRODUCER,
                                 DocumentAuthorities.READER)
                         .requestMatchers(HttpMethod.POST, "/api/v1/document-files")
+                        .hasAuthority(DocumentAuthorities.PRODUCER)
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/v1/applications/*/documents/*/uploads")
                         .hasAuthority(DocumentAuthorities.PRODUCER)
                         .requestMatchers(
                                 HttpMethod.POST,
@@ -142,14 +152,23 @@ public class DocumentSecurityConfig {
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
                 JwtValidators.createDefaultWithIssuer(issuer),
                 requiredAudience(audience),
-                requiredAccessToken()));
+                requiredSupportedToken()));
         return decoder;
     }
 
     private JwtAuthenticationConverter jwtAuthenticationConverter() {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        converter.setJwtGrantedAuthoritiesConverter(jwt ->
-                List.of(new SimpleGrantedAuthority(DocumentAuthorities.USER)));
+        converter.setJwtGrantedAuthoritiesConverter(jwt -> {
+            String tokenType = jwt.getClaimAsString("token_type");
+            if ("access".equals(tokenType)) {
+                return List.of(new SimpleGrantedAuthority(DocumentAuthorities.USER));
+            }
+            if (isLifecycleToken(jwt)) {
+                return List.of(new SimpleGrantedAuthority(
+                        DocumentAuthorities.ACCOUNT_LIFECYCLE));
+            }
+            return List.of();
+        });
         return converter;
     }
 
@@ -159,12 +178,20 @@ public class DocumentSecurityConfig {
                 : invalidToken();
     }
 
-    private static OAuth2TokenValidator<Jwt> requiredAccessToken() {
+    private static OAuth2TokenValidator<Jwt> requiredSupportedToken() {
         return token -> token.getSubject() != null
                         && !token.getSubject().isBlank()
-                        && "access".equals(token.getClaimAsString("token_type"))
+                        && ("access".equals(token.getClaimAsString("token_type"))
+                        || isLifecycleToken(token))
                 ? OAuth2TokenValidatorResult.success()
                 : invalidToken();
+    }
+
+    private static boolean isLifecycleToken(Jwt token) {
+        String operationId = token.getClaimAsString("operation_id");
+        return "account_lifecycle".equals(token.getClaimAsString("token_type"))
+                && operationId != null
+                && !operationId.isBlank();
     }
 
     private static OAuth2TokenValidatorResult invalidToken() {

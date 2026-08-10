@@ -16,15 +16,18 @@ import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
 import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
+import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter;
+import com.jobseekercopilot.documentstore.service.ApplicationAssociationClient;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -45,8 +48,15 @@ class DocumentLifecycleIntegrationTest {
     @Autowired
     private GeneratedDocumentRepository repository;
 
+    @Autowired
+    private ExportedDocumentFileRepository fileRepository;
+
+    @MockBean
+    private ApplicationAssociationClient applicationAssociationClient;
+
     @BeforeEach
     void cleanDatabase() {
+        fileRepository.deleteAll();
         repository.deleteAll();
     }
 

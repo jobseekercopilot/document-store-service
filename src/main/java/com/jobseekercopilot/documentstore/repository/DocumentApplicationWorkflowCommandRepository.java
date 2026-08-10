@@ -10,4 +10,8 @@ public interface DocumentApplicationWorkflowCommandRepository
 
     Optional<DocumentApplicationWorkflowCommand>
             findByOperationIdAndOwnerId(UUID operationId, String ownerId);
+
+    long countByOwnerId(String ownerId);
+
+    void deleteByOwnerId(String ownerId);
 }

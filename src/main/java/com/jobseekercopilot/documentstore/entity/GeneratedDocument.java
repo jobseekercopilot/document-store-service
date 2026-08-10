@@ -45,10 +45,9 @@ public class GeneratedDocument {
     @Column(nullable = false)
     private DocumentType documentType;
 
-    @Column(nullable = false)
     private String title;
 
-    @Column(nullable = false, columnDefinition = "TEXT")
+    @Column(columnDefinition = "TEXT")
     private String content;
 
     @Column(nullable = false)
@@ -71,6 +70,19 @@ public class GeneratedDocument {
 
     @Column(length = 64)
     private String contentSha256;
+
+    @Column(length = 64)
+    private String originalContentSha256;
+
+    private Long originalContentSize;
+
+    private UUID originalArtifactId;
+
+    @Enumerated(EnumType.STRING)
+    private FileType originalFileType;
+
+    @Enumerated(EnumType.STRING)
+    private DocumentExtractionState extractionState;
 
     @Embedded
     private GenerationProvenance generationProvenance;
@@ -102,6 +114,11 @@ public class GeneratedDocument {
     private String deletedBy;
 
     private LocalDateTime purgeEligibleAt;
+
+    private LocalDateTime purgedAt;
+
+    @Column(length = 64)
+    private String unavailableReason;
 
     @Column(nullable = false)
     @Builder.Default

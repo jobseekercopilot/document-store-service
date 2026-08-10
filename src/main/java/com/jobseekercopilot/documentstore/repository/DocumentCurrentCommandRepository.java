@@ -9,4 +9,8 @@ public interface DocumentCurrentCommandRepository
         extends JpaRepository<DocumentCurrentCommand, UUID> {
     Optional<DocumentCurrentCommand> findByOwnerIdAndIdempotencyKey(
             String ownerId, String idempotencyKey);
+
+    long countByOwnerId(String ownerId);
+
+    void deleteByOwnerId(String ownerId);
 }

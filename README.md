@@ -1,5 +1,13 @@
 # Document Store Service
 
+## Role in Job Seeker Copilot
+
+| Role | Called by | Calls | Data | Local port |
+|---|---|---|---|---:|
+| System of record for document families, immutable versions, files, lineage and retention lifecycle | Document Generation/BFF, Export, Tracker and Reporting | Application Tracker workflows; ClamAV | PostgreSQL metadata + configured object store | 8089 |
+
+See the central [document journey](https://docs.jobseekercopilot.com/journeys/documents/), [domain model](https://docs.jobseekercopilot.com/data/domain-models/), and [data ownership](https://docs.jobseekercopilot.com/data/ownership/).
+
 Persistence service for generated CV and cover-letter text, relational file
 metadata, and private object-backed DOCX/PDF bytes.
 
@@ -12,10 +20,10 @@ locking, database uniqueness, retry keys and explicit restoration. Production
 file writes additionally require a
 private S3-compatible bucket and managed SSE-KMS key. Approved consumers and
 Infrastructure have not completed identity, secret/key, bucket and deployment
-rollout. Retention transitions and fail-closed purge guards now exist in the
-repository, but product/legal policy approval, the client recovery journey,
-cross-service application-link protection, integrated consumer idempotency and
-deployed reconciliation alerting remain open. See
+rollout. DOC-09 policy is approved and cross-service tombstone/hash-scrubbing
+guards now exist in the repository, but the client recovery journey,
+production backup/object/log expiry, administrator deployment, integrated
+consumer idempotency and deployed reconciliation alerting remain open. See
 [`docs/BETA_READINESS_AUDIT.md`](docs/BETA_READINESS_AUDIT.md).
 
 The bounded generated-document cleanup dependency from Job Finder, and the
@@ -43,7 +51,7 @@ remain required.
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-3.1.0 contract. It includes content-free paged family summaries, newest-first
+4.1.0 contract. It includes content-free paged family summaries, newest-first
 server-numbered history, safe exact-artifact manifests and a concurrency- and
 idempotency-protected explicit current-pointer command. Approval and current
 selection are independent. Exact retained artifacts can be downloaded through
@@ -57,6 +65,31 @@ used by Application Tracker's durable generated-withdrawal workflow. Replaying
 the same exact document set is safe, and a failure rolls back the entire Store
 transaction. Maven verification fails when the running contract drifts from
 this file.
+
+Version 3.3.0 also adds a no-store account export. Coordinated account deletion
+uses a separate internal lifecycle-token route to recoverably delete owned
+documents while retaining legal-held records; irreversible production purge
+remains governed by the independent DOC-09 deployment gate.
+
+Version 3.4.0 adds a reader-authorized, owner-scoped, content-free document
+activity feed for version creation, successful download, current-version
+changes, archive and restore. Command replays and state-preserving no-ops do not
+create duplicate activity, and the activity rows follow the approved 365-day
+lifecycle-audit retention policy.
+
+Version 4.0.0 adds producer-only, application-scoped PDF/DOCX uploads. Each
+operation durably moves through quarantine, mandatory ClamAV scanning,
+bounded deterministic extraction and atomic publication. Only a clean
+`READY` operation exposes an approved immutable version and exact original
+artifact. Original-byte and normalised-text SHA-256 values remain distinct;
+uploads do not call Payment, CV/Letter Service, OpenAI or another public
+scanner.
+
+Version 4.1.0 adds an internal, environment-data-authenticated runtime-owner
+reset and verification boundary. It accepts only the deterministic synthetic
+owner derived from the named scenario and identity and is enabled only for an
+explicitly isolated non-production database. Existing public and fixture
+operations are unchanged.
 
 The identity sources, least-privilege service roles, authorization matrix,
 stable denial rules and deployment dependencies are defined in
@@ -77,7 +110,7 @@ metrics and guarded orphan-recovery procedure are defined in
 [`docs/STORAGE_RECONCILIATION.md`](docs/STORAGE_RECONCILIATION.md).
 Approval/version behavior is defined in
 [`docs/DOCUMENT_LIFECYCLE.md`](docs/DOCUMENT_LIFECYCLE.md). Recoverable
-deletion, legal hold, fail-closed purge, proposed retention periods and
+deletion, legal hold, fail-closed purge, approved retention periods and
 production approval gates are defined in
 [`docs/RETENTION_AND_PURGE.md`](docs/RETENTION_AND_PURGE.md).
 
@@ -103,8 +136,7 @@ bounded audit maintenance. It also covers bounded operation metrics,
 log/metric redaction, correlation propagation, database/object-storage
 readiness and reconciliation signals.
 Passing it does not resolve consumer rollout, deployed platform evidence,
-deployed monitoring/reconciliation alerting or product/legal retention
-approval.
+deployed monitoring/reconciliation alerting or production purge enablement.
 
 To intentionally refresh the contract after reviewing an API change:
 

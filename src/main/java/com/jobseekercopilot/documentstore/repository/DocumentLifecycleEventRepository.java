@@ -13,6 +13,12 @@ public interface DocumentLifecycleEventRepository
     List<DocumentLifecycleEvent> findByDocumentIdAndOwnerIdOrderByOccurredAtAsc(
             UUID documentId, String ownerId);
 
+    List<DocumentLifecycleEvent> findByOwnerIdOrderByOccurredAtAscIdAsc(String ownerId);
+
+    long countByOwnerId(String ownerId);
+
+    void deleteByOwnerId(String ownerId);
+
     boolean existsByDocumentIdAndOwnerIdAndAction(
             UUID documentId,
             String ownerId,

@@ -66,13 +66,15 @@ class PostgresStorageRecoveryIntegrationTest {
         // The bytes remain recoverable as LEGACY_DATABASE until the startup
         // migrator has durably copied and verified the external object.
         Flyway flyway = flyway(POSTGRES.getJdbcUrl());
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(8);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(11);
         flyway.validate();
         try (Connection connection = primaryConnection()) {
             assertThatThrownBy(() -> markLegacyAvailableWithoutObject(connection, fileId))
                     .isInstanceOf(SQLException.class)
                     .extracting(exception -> ((SQLException) exception).getSQLState())
                     .isEqualTo("23514");
+            assertSecureUploadMigrationPreservedLegacyDocument(
+                    connection, documentId);
         }
 
         // Discard all application-side migration and JDBC state, then repeat the
@@ -290,6 +292,32 @@ class PostgresStorageRecoveryIntegrationTest {
                 """)) {
             statement.setObject(1, fileId);
             statement.executeUpdate();
+        }
+    }
+
+    private void assertSecureUploadMigrationPreservedLegacyDocument(
+            Connection connection, UUID documentId) throws SQLException {
+        try (PreparedStatement document = connection.prepareStatement("""
+                SELECT original_content_sha256, original_content_size,
+                       original_artifact_id, original_file_type, extraction_state
+                  FROM generated_documents
+                 WHERE id = ?
+                """);
+                PreparedStatement uploads = connection.prepareStatement(
+                        "SELECT COUNT(*) FROM application_document_uploads")) {
+            document.setObject(1, documentId);
+            try (ResultSet result = document.executeQuery()) {
+                assertThat(result.next()).isTrue();
+                assertThat(result.getObject(1)).isNull();
+                assertThat(result.getObject(2)).isNull();
+                assertThat(result.getObject(3)).isNull();
+                assertThat(result.getObject(4)).isNull();
+                assertThat(result.getObject(5)).isNull();
+            }
+            try (ResultSet result = uploads.executeQuery()) {
+                assertThat(result.next()).isTrue();
+                assertThat(result.getLong(1)).isZero();
+            }
         }
     }
 

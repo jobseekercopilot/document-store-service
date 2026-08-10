@@ -5,8 +5,10 @@ import com.jobseekercopilot.documentstore.dto.DocumentReferenceResponse;
 import com.jobseekercopilot.documentstore.dto.DocumentEvidenceProvenance;
 import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
-import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
+import com.jobseekercopilot.documentstore.config.DocumentUploadProperties;
+import com.jobseekercopilot.documentstore.entity.DocumentActivityType;
 import com.jobseekercopilot.documentstore.entity.DocumentGroundingState;
+import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
 import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
@@ -38,6 +40,8 @@ public class GeneratedDocumentService {
     private final DocumentRetentionService retentionService;
     private final DocumentOperationLock operationLock;
     private final DocumentStoreMetrics metrics;
+    private final DocumentActivityService activityService;
+    private final DocumentUploadProperties uploadProperties;
 
     @Transactional
     public GeneratedDocumentResponse createDocument(
@@ -58,6 +62,9 @@ public class GeneratedDocumentService {
             CreateDocumentRequest request,
             String requestedOperationKey) {
         String operationKey = IdempotencyKeys.validate(requestedOperationKey);
+        if (request.getTitle() == null || request.getTitle().isBlank()) {
+            throw new IllegalArgumentException("Document title is required.");
+        }
         String applicationId = blankToNull(request.getApplicationId());
         if (Boolean.TRUE.equals(request.getActive())) {
             throw new IllegalArgumentException(
@@ -98,12 +105,30 @@ public class GeneratedDocumentService {
         UUID documentFamilyId = request.getDocumentFamilyId() == null
                 ? UUID.randomUUID()
                 : request.getDocumentFamilyId();
+        if (sourceType == DocumentSourceType.UPLOADED) {
+            operationLock.acquire(lockScope("uploaded-document-quota", ownerId));
+            boolean existingFamily = repository
+                    .findFirstByDocumentFamilyIdAndUserIdOrderByVersionDesc(
+                            documentFamilyId, ownerId)
+                    .isPresent();
+            if (!existingFamily
+                    && repository.countRetainedFamilies(ownerId)
+                            >= uploadProperties.getMaximumFamiliesPerOwner()) {
+                throw new OperationConflictException(
+                        "Uploaded document family quota has been reached.");
+            }
+        }
         operationLock.acquire(lockScope("document-family", ownerId, documentFamilyId));
         GeneratedDocument latestVersion = repository
                 .findFirstByDocumentFamilyIdAndUserIdOrderByVersionDesc(
                         documentFamilyId, ownerId)
                 .orElse(null);
         int nextVersion = latestVersion == null ? 1 : latestVersion.getVersion() + 1;
+        if (sourceType == DocumentSourceType.UPLOADED
+                && nextVersion > uploadProperties.getMaximumVersionsPerFamily()) {
+            throw new OperationConflictException(
+                    "Uploaded document family version quota has been reached.");
+        }
         validateFamily(request, latestVersion);
         if (request.getVersion() != null && request.getVersion() != nextVersion) {
             throw new OperationConflictException(
@@ -140,6 +165,12 @@ public class GeneratedDocumentService {
                 .build();
 
         GeneratedDocument saved = repository.saveAndFlush(document);
+        activityService.recordOnce(
+                "document-created:" + saved.getId(),
+                DocumentActivityType.DOCUMENT_VERSION_CREATED,
+                saved,
+                "CREATED",
+                saved.getCreatedAt());
         metrics.recordPayload(
                 "document",
                 "stored",
@@ -345,6 +376,11 @@ public class GeneratedDocumentService {
         deactivateCurrentVersions(ownerId, document.getDocumentFamilyId());
         document.setActive(true);
         repository.saveAndFlush(document);
+        activityService.record(
+                DocumentActivityType.DOCUMENT_CURRENT_VERSION_CHANGED,
+                document,
+                "CURRENT_SELECTED",
+                LocalDateTime.now());
         return mapToResponse(document);
     }
 
@@ -450,6 +486,11 @@ public class GeneratedDocumentService {
                 .lifecycleState(document.getLifecycleState())
                 .retentionState(document.getRetentionState())
                 .contentSha256(document.getContentSha256())
+                .originalContentSha256(document.getOriginalContentSha256())
+                .originalContentSize(document.getOriginalContentSize())
+                .originalArtifactId(document.getOriginalArtifactId())
+                .originalFileType(document.getOriginalFileType())
+                .extractionState(document.getExtractionState())
                 .generationMetadata(toDto(document.getGenerationProvenance()))
                 .evidenceProvenance(document.getEvidenceProvenance())
                 .groundingState(document.getGroundingState())
@@ -460,6 +501,8 @@ public class GeneratedDocumentService {
                 .archivedAt(withUtcOffset(document.getArchivedAt()))
                 .deletedAt(withUtcOffset(document.getDeletedAt()))
                 .purgeEligibleAt(withUtcOffset(document.getPurgeEligibleAt()))
+                .purgedAt(withUtcOffset(document.getPurgedAt()))
+                .unavailableReason(document.getUnavailableReason())
                 .legalHold(document.isLegalHold())
                 .originalFilename(document.getOriginalFilename())
                 .sourceType(document.getSourceType())
@@ -489,6 +532,12 @@ public class GeneratedDocumentService {
                 .documentType(document.getDocumentType())
                 .version(document.getVersion())
                 .contentSha256(document.getContentSha256())
+                .originalContentSha256(document.getOriginalContentSha256())
+                .originalContentSize(document.getOriginalContentSize())
+                .originalArtifactId(document.getOriginalArtifactId())
+                .originalFileType(document.getOriginalFileType())
+                .extractionState(document.getExtractionState())
+                .sourceType(document.getSourceType())
                 .lifecycleState(document.getLifecycleState())
                 .current(document.isActive())
                 .generationMetadata(toDto(document.getGenerationProvenance()))

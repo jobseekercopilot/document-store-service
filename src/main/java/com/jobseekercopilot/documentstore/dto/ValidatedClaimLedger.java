@@ -29,7 +29,7 @@ public record ValidatedClaimLedger(
         String parserVersion,
         @Valid
         @NotEmpty
-        @Size(max = 40)
+        @Size(max = 200)
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         List<ValidatedClaim> claims) {
 

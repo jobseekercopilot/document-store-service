@@ -1,7 +1,8 @@
 # Document retention, recovery and purge
 
-Status: repository policy proposal implemented fail-closed; product, legal,
-privacy and production-platform approval remain required.
+Status: DOC-09 product policy approved on 2026-08-07 and implemented
+fail-closed. Production purge remains prohibited until the deployment evidence
+listed below is peer reviewed.
 
 ## Safety boundary
 
@@ -17,36 +18,40 @@ unless all of these conditions are true:
    and supplies the owner binding;
 4. the document is already `DELETED` and its recovery deadline has passed;
 5. no legal hold is active;
-6. the Store row has no application link; and
-7. no unresolved `PREPARED` storage operation exists.
+6. Application Tracker returns an authoritative owner-scoped association
+   snapshot immediately before deletion;
+7. Tracker accepts the terminal `PURGED` availability projection and scrubs
+   complete hashes and evidence details; and
+8. no unresolved `PREPARED` storage operation exists.
 
-The purge command is owner-scoped and retry-safe. It removes file objects,
-file metadata, document text and document metadata. A bounded `PURGED` lifecycle
-event is retained without document content so an authorized retry can succeed
-without recreating state. The service has no bulk purge endpoint.
+The purge command is owner-scoped and retry-safe. It removes file objects and
+file metadata, scrubs document content, filenames, complete hashes, generation
+and evidence payloads, and retains only an owner-visible `PURGED` tombstone,
+content-free lifecycle audit and exact application/freeze associations. It
+never redirects an application. The service has no bulk purge endpoint.
 
-The local application-link check is deliberately conservative but not yet
-sufficient cross-service evidence. Product enablement also requires APP-08 and
-DOCGEN-14 integration to prove that Application Tracker's immutable references
-cannot be bypassed. Keep production purge disabled until that evidence exists.
+Association state alone does not retain bytes forever. While an application is
+inside the supported history window, its exact version identity is protected;
+after an approved purge, that protection is the scrubbed tombstone and frozen
+association rather than document content. Until the supported-history boundary
+and production controls are evidenced, operators must not enable production
+purge.
 
-## Proposed periods requiring approval
+## Approved policy periods
 
-The repository defaults are safety-oriented proposals, not legal decisions:
-
-| Record | Proposed default | Rule |
+| Record | Approved period | Rule |
 | --- | ---: | --- |
 | Soft-deleted document and its files | 30 days | Recoverable; purge only by the guarded administrator command |
 | Completed `COMMITTED`/`ROLLED_BACK` storage journal | 90 days | May be batch-removed only after approved maintenance is enabled |
 | Unresolved `PREPARED` storage journal | No age-based deletion | Keep until reconciliation or reviewed manual resolution |
 | Lifecycle transition audit | 365 days | Content-free event; batch removal only after approved maintenance is enabled |
 | Reconciliation cursors | Indefinite | Retain position; reset to the start only after a completed end-of-scan page |
-| Application-used document versions | Until the supported history policy permits removal | Never silently overwrite; local application link blocks purge |
+| Application-used document identity | While supported application history exists | Preserve exact family/version/type and draft/frozen association; never redirect; bytes may be removed only through the peer-approved guarded process |
 
-Product, legal and privacy owners must approve the periods, supported
-application-history duration, legal-hold process, account-closure trigger and
-the wording below. Infrastructure must separately approve backup expiry,
-object-version expiry and operational access.
+The periods, user copy and peer-approved legal-hold/purge procedure were
+approved on 2026-08-07. Infrastructure must still evidence backup expiry,
+object-version expiry, log expiry, administrator deployment and operational
+access before production purge can be enabled.
 
 ## Maintenance boundary
 
@@ -96,7 +101,7 @@ Support procedure:
 6. If any store, reference, hold or backup fact is uncertain, stop. Do not
    bypass a guard or alter database state manually.
 
-## User-facing copy for product review
+## Approved user-facing copy
 
 The client work is a separate dependency. It should use equivalent plain
 language and must display the server deadline rather than calculating one:
@@ -113,11 +118,14 @@ language and must display the server deadline rather than calculating one:
 - Irreversible deletion: “After the recovery period and required retention
   checks, deletion may become permanent. Copies already downloaded by you are
   not controlled by Job Seeker Copilot.”
-- Protected history: “This version is linked to application history and cannot
-  be permanently removed through this action.”
+- Associated version: “This version is selected for a draft application or was
+  used for a submitted application. Archive is recommended. Deleting it will
+  not switch those applications to another version.”
+- Purged tombstone: “This document’s content is no longer available. Its exact
+  version and application history are kept so your records remain accurate.”
 
-The UI must not promise a production purge date until product/legal approval,
-cross-service application-link verification and backup expiry are deployed.
+The UI must not promise a production purge date until cross-service
+application-link verification and backup expiry are deployed.
 
 ## Backups, exports and incomplete work
 
@@ -142,13 +150,13 @@ The guarded recovery process is in
 
 ## Production approval checklist
 
-- Product/legal/privacy have approved periods, triggers, user copy, application
-  history and legal-hold procedures.
-- DOCGEN-14/APP-08 integration proves immutable application links.
+- Product/legal/privacy approval dated 2026-08-07 is linked to DOC-09.
+- Store/Tracker integration proves immutable exact identity, draft/frozen
+  association capture and terminal hash/evidence scrubbing.
 - Infrastructure injects and rotates a distinct administrator credential.
 - PostgreSQL, S3 object versions, backups, logs and exported reports have
   compatible expiry and restore handling.
 - Cross-user archive, restore, delete and purge denial pass in integrated E2E.
 - A synthetic production-like recovery/purge exercise proves that no content
   appears in logs or evidence.
-- Only then are maintenance and purge enabled with the reviewed policy version.
+- Only then is production purge enabled with the reviewed policy version.

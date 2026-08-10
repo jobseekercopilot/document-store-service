@@ -77,6 +77,25 @@ document-store:
     maximum-docx-entry-bytes: ${DOCUMENT_STORE_MAXIMUM_DOCX_ENTRY_BYTES:10485760}
     maximum-docx-expanded-bytes: ${DOCUMENT_STORE_MAXIMUM_DOCX_EXPANDED_BYTES:26214400}
     maximum-docx-expansion-ratio: ${DOCUMENT_STORE_MAXIMUM_DOCX_EXPANSION_RATIO:100}
+  upload:
+    maximum-families-per-owner: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_FAMILIES:100}
+    maximum-versions-per-family: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_VERSIONS_PER_FAMILY:20}
+    maximum-original-bytes-per-owner: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_ORIGINAL_BYTES:524288000}
+    maximum-attempts-per-window: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_ATTEMPTS_PER_WINDOW:20}
+    rate-window-seconds: ${DOCUMENT_STORE_UPLOAD_RATE_WINDOW_SECONDS:60}
+    maximum-pdf-pages: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_PDF_PAGES:100}
+    maximum-extracted-characters: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_EXTRACTED_CHARACTERS:1000000}
+    extraction-timeout-seconds: ${DOCUMENT_STORE_UPLOAD_EXTRACTION_TIMEOUT_SECONDS:15}
+    cleanup-enabled: ${DOCUMENT_STORE_UPLOAD_CLEANUP_ENABLED:true}
+    cleanup-minimum-age-seconds: ${DOCUMENT_STORE_UPLOAD_CLEANUP_MINIMUM_AGE_SECONDS:300}
+    cleanup-fixed-delay-ms: ${DOCUMENT_STORE_UPLOAD_CLEANUP_FIXED_DELAY_MS:300000}
+    cleanup-batch-size: ${DOCUMENT_STORE_UPLOAD_CLEANUP_BATCH_SIZE:50}
+    scanner:
+      host: ${DOCUMENT_STORE_CLAMAV_HOST:clamav}
+      port: ${DOCUMENT_STORE_CLAMAV_PORT:3310}
+      connect-timeout-ms: ${DOCUMENT_STORE_CLAMAV_CONNECT_TIMEOUT_MS:2000}
+      read-timeout-ms: ${DOCUMENT_STORE_CLAMAV_READ_TIMEOUT_MS:30000}
+      maximum-signature-age-hours: ${DOCUMENT_STORE_CLAMAV_MAXIMUM_SIGNATURE_AGE_HOURS:48}
   object-storage:
     provider: ${DOCUMENT_STORE_OBJECT_PROVIDER:s3}
     filesystem-root: ${DOCUMENT_STORE_FILESYSTEM_ROOT:}
@@ -103,6 +122,12 @@ document-store:
       reader-token: ${DOCUMENT_STORE_READER_TOKEN:}
       retention-admin-token: ${DOCUMENT_STORE_RETENTION_ADMIN_TOKEN:}
     environment-data-token: ${ENVIRONMENT_DATA_TOKEN:}
+
+services:
+  application-tracker-service:
+    base-url: ${APPLICATION_TRACKER_SERVICE_URL:http://application-tracker-service:8085}
+    reader-token: ${APPLICATION_TRACKER_READER_TOKEN:}
+    producer-token: ${APPLICATION_TRACKER_PRODUCER_TOKEN:}
 
 logging:
   pattern:

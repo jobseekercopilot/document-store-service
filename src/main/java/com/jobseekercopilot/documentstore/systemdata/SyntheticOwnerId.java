@@ -11,7 +11,8 @@ final class SyntheticOwnerId {
     private SyntheticOwnerId() {
     }
 
-    static void requireMatches(String scenarioId, String identityKey, UUID suppliedOwnerId) {
+    static void requireMatches(
+            String scenarioId, String identityKey, UUID suppliedOwnerId) {
         if ("registration-clean-v1".equals(scenarioId)
                 && "registration-primary".equals(identityKey)) {
             return;

@@ -6,14 +6,17 @@ import com.jobseekercopilot.documentstore.entity.FileSource;
 import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
+import com.jobseekercopilot.documentstore.repository.DocumentTombstoneAssociationRepository;
 import com.jobseekercopilot.documentstore.service.DocumentFileLifecycleService;
 import com.jobseekercopilot.documentstore.service.DocumentFileValidator;
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
 import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -36,23 +39,30 @@ public class DocumentStoreSystemDataController {
     private final EnvironmentDataGuard guard;
     private final GeneratedDocumentRepository documentRepository;
     private final ExportedDocumentFileRepository fileRepository;
+    private final DocumentTombstoneAssociationRepository
+            tombstoneAssociationRepository;
     private final DocumentObjectStorage objectStorage;
     private final DocumentFileLifecycleService fileLifecycleService;
     private final DocumentFileValidator fileValidator;
+    private final OwnerRuntimeDocumentService ownerRuntimeService;
 
     public DocumentStoreSystemDataController(
             EnvironmentDataGuard guard,
             GeneratedDocumentRepository documentRepository,
             ExportedDocumentFileRepository fileRepository,
+            DocumentTombstoneAssociationRepository tombstoneAssociationRepository,
             DocumentObjectStorage objectStorage,
             DocumentFileLifecycleService fileLifecycleService,
-            DocumentFileValidator fileValidator) {
+            DocumentFileValidator fileValidator,
+            OwnerRuntimeDocumentService ownerRuntimeService) {
         this.guard = guard;
         this.documentRepository = documentRepository;
         this.fileRepository = fileRepository;
+        this.tombstoneAssociationRepository = tombstoneAssociationRepository;
         this.objectStorage = objectStorage;
         this.fileLifecycleService = fileLifecycleService;
         this.fileValidator = fileValidator;
+        this.ownerRuntimeService = ownerRuntimeService;
     }
 
     @PostMapping("/seed/documents")
@@ -95,6 +105,7 @@ public class DocumentStoreSystemDataController {
         int fileCount = documentIds.isEmpty() ? 0 : fileRepository.findByGeneratedDocumentIdIn(documentIds).size();
         if (!documentIds.isEmpty()) {
             fileLifecycleService.deleteForDocuments(documentIds);
+            tombstoneAssociationRepository.deleteByDocumentIdIn(documentIds);
         }
         documentRepository.deleteByUserId(userId);
         Map<String, Object> details = new java.util.LinkedHashMap<>(extraDetails);
@@ -188,5 +199,45 @@ public class DocumentStoreSystemDataController {
         details.put("files", fileCount);
         return ResponseEntity.ok(SystemDataResult.success(
                 "VERIFY", documents.size() + fileCount, guard.activeEnvironment(), details));
+    }
+
+    @DeleteMapping(
+            "/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
+    public ResponseEntity<SystemDataResult> resetRuntimeOwner(
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}")
+            String scenarioId,
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}")
+            String identityKey,
+            @PathVariable UUID userId) {
+        guard.requireRuntimeOwnerCleanup();
+        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
+        OwnerRuntimeDocumentSummary summary = ownerRuntimeService.reset(userId);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "RESET_RUNTIME_OWNER",
+                summary.total(),
+                guard.activeEnvironment(),
+                summary.details(scenarioId, identityKey)));
+    }
+
+    @GetMapping(
+            "/v1/runtime-owners/{scenarioId}/identities/{identityKey}/owners/{userId}")
+    public ResponseEntity<SystemDataResult> verifyRuntimeOwner(
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,54}-v[1-9][0-9]{0,6}")
+            String scenarioId,
+            @PathVariable
+            @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,54}")
+            String identityKey,
+            @PathVariable UUID userId) {
+        guard.requireRuntimeOwnerCleanup();
+        SyntheticOwnerId.requireMatches(scenarioId, identityKey, userId);
+        OwnerRuntimeDocumentSummary summary = ownerRuntimeService.verify(userId);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "VERIFY_RUNTIME_OWNER",
+                summary.total(),
+                guard.activeEnvironment(),
+                summary.details(scenarioId, identityKey)));
     }
 }

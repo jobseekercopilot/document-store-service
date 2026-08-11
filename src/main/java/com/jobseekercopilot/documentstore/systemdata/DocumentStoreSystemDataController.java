@@ -24,6 +24,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.constraints.Pattern;
+import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
 import java.util.Map;
@@ -82,6 +84,11 @@ public class DocumentStoreSystemDataController {
     @DeleteMapping("/scenario/{scenarioId}/documents/{userId}")
     public ResponseEntity<SystemDataResult> resetDocuments(@PathVariable String scenarioId, @PathVariable String userId) {
         guard.requireEnabled();
+        return resetDocumentsForOwner(scenarioId, userId, Map.of());
+    }
+
+    private ResponseEntity<SystemDataResult> resetDocumentsForOwner(
+            String scenarioId, String userId, Map<String, Object> extraDetails) {
         List<GeneratedDocument> documents = documentRepository.findByUserId(userId);
         List<UUID> documentIds = documents.stream().map(GeneratedDocument::getId).toList();
         int fileCount = documentIds.isEmpty() ? 0 : fileRepository.findByGeneratedDocumentIdIn(documentIds).size();
@@ -90,11 +97,14 @@ public class DocumentStoreSystemDataController {
             tombstoneAssociationRepository.deleteByDocumentIdIn(documentIds);
         }
         documentRepository.deleteByUserId(userId);
-        return ResponseEntity.ok(SystemDataResult.success("RESET", documents.size() + fileCount, guard.activeEnvironment(), Map.of(
-                "scenarioId", scenarioId,
-                "userId", userId,
-                "documents", documents.size(),
-                "files", fileCount)));
+        Map<String, Object> details = new java.util.LinkedHashMap<>(extraDetails);
+        details.put("scenarioId", scenarioId);
+        details.put("userId", userId);
+        details.put("documents", documents.size());
+        details.put("documentVersions", documents.size());
+        details.put("files", fileCount);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "RESET", documents.size() + fileCount, guard.activeEnvironment(), details));
     }
 
     private ExportedDocumentFile seedFile(SystemDataDocumentFileSeed seed) {
@@ -152,14 +162,21 @@ public class DocumentStoreSystemDataController {
     @GetMapping("/verify/documents/{userId}")
     public ResponseEntity<SystemDataResult> verifyDocuments(@PathVariable String userId) {
         guard.requireEnabled();
+        return verifyDocumentsForOwner(userId, Map.of());
+    }
+
+    private ResponseEntity<SystemDataResult> verifyDocumentsForOwner(
+            String userId, Map<String, Object> extraDetails) {
         List<GeneratedDocument> documents = documentRepository.findByUserId(userId);
         List<UUID> documentIds = documents.stream().map(GeneratedDocument::getId).toList();
         int fileCount = documentIds.isEmpty() ? 0 : fileRepository.findByGeneratedDocumentIdIn(documentIds).size();
-        return ResponseEntity.ok(SystemDataResult.success("VERIFY", documents.size() + fileCount, guard.activeEnvironment(), Map.of(
-                "userId", userId,
-                "documents", documents.size(),
-                "documentVersions", documents.size(),
-                "files", fileCount)));
+        Map<String, Object> details = new java.util.LinkedHashMap<>(extraDetails);
+        details.put("userId", userId);
+        details.put("documents", documents.size());
+        details.put("documentVersions", documents.size());
+        details.put("files", fileCount);
+        return ResponseEntity.ok(SystemDataResult.success(
+                "VERIFY", documents.size() + fileCount, guard.activeEnvironment(), details));
     }
 
     @DeleteMapping(

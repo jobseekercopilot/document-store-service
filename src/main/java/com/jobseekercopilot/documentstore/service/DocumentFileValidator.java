@@ -11,8 +11,10 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -23,6 +25,18 @@ import java.util.zip.ZipInputStream;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSBase;
+import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSObject;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException;
+import org.apache.pdfbox.pdmodel.interactive.action.PDAction;
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionURI;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.w3c.dom.Document;
@@ -48,14 +62,47 @@ public class DocumentFileValidator {
     private static final int MAXIMUM_FILE_NAME_CHARACTERS = 255;
     private static final int MAXIMUM_ENTRY_NAME_CHARACTERS = 512;
     private static final int PDF_TRAILER_SEARCH_BYTES = 1024;
-    private static final Set<String> FORBIDDEN_PDF_TOKENS = Set.of(
-            "/Encrypt",
-            "/JavaScript",
-            "/JS",
-            "/Launch",
-            "/EmbeddedFile",
-            "/OpenAction",
-            "/AA");
+    private static final COSName PDF_IS_MAP = COSName.getPDFName("IsMap");
+    private static final COSName PDF_JAVASCRIPT = COSName.getPDFName("JavaScript");
+    private static final COSName PDF_RICH_MEDIA_CONTENT =
+            COSName.getPDFName("RichMediaContent");
+    private static final COSName PDF_RICH_MEDIA_SETTINGS =
+            COSName.getPDFName("RichMediaSettings");
+    private static final COSName PDF_PREVIOUS_ACTION = COSName.getPDFName("PA");
+    private static final Set<COSName> SAFE_PDF_URI_ACTION_KEYS = Set.of(
+            COSName.TYPE, COSName.S, COSName.URI, PDF_IS_MAP);
+    private static final Set<COSName> FORBIDDEN_PDF_DICTIONARY_KEYS = Set.of(
+            COSName.AA,
+            COSName.ACRO_FORM,
+            COSName.AF,
+            COSName.EF,
+            COSName.EMBEDDED_FILES,
+            COSName.ENCRYPT,
+            COSName.OPEN_ACTION,
+            COSName.XFA,
+            PDF_JAVASCRIPT,
+            PDF_RICH_MEDIA_CONTENT,
+            PDF_RICH_MEDIA_SETTINGS);
+    private static final Set<String> PDF_ACTION_SUBTYPES = Set.of(
+            "GoTo",
+            "GoToR",
+            "GoToE",
+            "Launch",
+            "Thread",
+            "URI",
+            "Sound",
+            "Movie",
+            "Hide",
+            "Named",
+            "SubmitForm",
+            "ResetForm",
+            "ImportData",
+            "JavaScript",
+            "SetOCGState",
+            "Rendition",
+            "Trans",
+            "GoTo3DView",
+            "RichMediaExecute");
 
     private final DocumentFileValidationProperties properties;
 
@@ -166,7 +213,7 @@ public class DocumentFileValidator {
             throw tooLarge();
         }
         switch (fileType) {
-            case PDF -> validatePdf(content);
+            case PDF -> validatePdf(content, allowSafeExternalHyperlinks);
             case DOCX -> validateDocx(content, allowSafeExternalHyperlinks);
         }
     }
@@ -232,7 +279,7 @@ public class DocumentFileValidator {
         }
     }
 
-    private void validatePdf(byte[] content) {
+    private void validatePdf(byte[] content, boolean allowSafeExternalHyperlinks) {
         if (content.length < 12
                 || content[0] != '%'
                 || content[1] != 'P'
@@ -248,12 +295,163 @@ public class DocumentFileValidator {
                 || hasNonWhitespaceAfterTrailer(searchable, trailer + 5)) {
             throw new IllegalArgumentException("PDF file is corrupt or incomplete");
         }
-        for (String forbiddenToken : FORBIDDEN_PDF_TOKENS) {
-            if (searchable.contains(forbiddenToken)) {
-                throw new IllegalArgumentException(
-                        "PDF active or encrypted content is not supported");
+
+        try (PDDocument document = Loader.loadPDF(content)) {
+            if (document.isEncrypted() || document.getDocument().isEncrypted()) {
+                throw unsafePdf();
+            }
+            Set<COSDictionary> safeUriActions = Collections.newSetFromMap(
+                    new IdentityHashMap<>());
+            validatePdfAnnotations(
+                    document, allowSafeExternalHyperlinks, safeUriActions);
+            Set<COSBase> inspected = Collections.newSetFromMap(
+                    new IdentityHashMap<>());
+            validatePdfObjectGraph(
+                    document.getDocument().getTrailer(), safeUriActions, inspected);
+        } catch (InvalidPasswordException exception) {
+            throw unsafePdf();
+        } catch (IOException exception) {
+            throw new IllegalArgumentException("PDF file is corrupt or incomplete");
+        }
+    }
+
+    private void validatePdfAnnotations(
+            PDDocument document,
+            boolean allowSafeExternalHyperlinks,
+            Set<COSDictionary> safeUriActions) throws IOException {
+        int linkAnnotations = 0;
+        for (var page : document.getPages()) {
+            for (PDAnnotation annotation : page.getAnnotations()) {
+                if (!allowSafeExternalHyperlinks
+                        || !(annotation instanceof PDAnnotationLink link)) {
+                    throw unsafePdf();
+                }
+                linkAnnotations++;
+                if (linkAnnotations > properties.getMaximumPdfLinkAnnotations()) {
+                    throw new IllegalArgumentException(
+                            "PDF contains too many external link annotations");
+                }
+                validateSafePdfUriLink(link, safeUriActions);
             }
         }
+    }
+
+    private void validateSafePdfUriLink(
+            PDAnnotationLink link, Set<COSDictionary> safeUriActions)
+            throws IOException {
+        COSDictionary linkDictionary = link.getCOSObject();
+        if (linkDictionary.containsKey(COSName.AA)
+                || linkDictionary.containsKey(COSName.DEST)
+                || linkDictionary.containsKey(PDF_PREVIOUS_ACTION)) {
+            throw unsafePdf();
+        }
+        PDAction action = link.getAction();
+        if (!(action instanceof PDActionURI uriAction)) {
+            throw unsafePdf();
+        }
+        COSDictionary actionDictionary = uriAction.getCOSObject();
+        if (linkDictionary.getDictionaryObject(COSName.A) != actionDictionary
+                || actionDictionary.keySet().stream()
+                        .anyMatch(key -> !SAFE_PDF_URI_ACTION_KEYS.contains(key))
+                || !"URI".equals(actionDictionary.getNameAsString(COSName.S))
+                || (action.getType() != null && !"Action".equals(action.getType()))
+                || (action.getNext() != null && !action.getNext().isEmpty())
+                || uriAction.shouldTrackMousePosition()
+                || !isSafePdfUriTarget(uriAction.getURI())) {
+            throw unsafePdf();
+        }
+        safeUriActions.add(actionDictionary);
+    }
+
+    private boolean isSafePdfUriTarget(String target) {
+        if (target == null
+                || target.isBlank()
+                || target.length() > properties.getMaximumPdfLinkTargetCharacters()
+                || target.codePoints().anyMatch(this::isUnsafeUriCharacter)
+                || containsPercentEncodedControl(target)) {
+            return false;
+        }
+        try {
+            URI uri = new URI(target);
+            return uri.isAbsolute()
+                    && "https".equalsIgnoreCase(uri.getScheme())
+                    && uri.getHost() != null
+                    && !uri.getHost().isBlank()
+                    && uri.getRawUserInfo() == null;
+        } catch (URISyntaxException exception) {
+            return false;
+        }
+    }
+
+    private boolean isUnsafeUriCharacter(int character) {
+        return Character.isISOControl(character)
+                || Character.getType(character) == Character.FORMAT;
+    }
+
+    private boolean containsPercentEncodedControl(String target) {
+        for (int index = 0; index + 2 < target.length(); index++) {
+            if (target.charAt(index) != '%') {
+                continue;
+            }
+            int high = Character.digit(target.charAt(index + 1), 16);
+            int low = Character.digit(target.charAt(index + 2), 16);
+            if (high >= 0 && low >= 0) {
+                int decoded = high * 16 + low;
+                if (decoded <= 0x1f || decoded == 0x7f) {
+                    return true;
+                }
+                index += 2;
+            }
+        }
+        return false;
+    }
+
+    private void validatePdfObjectGraph(
+            COSBase value,
+            Set<COSDictionary> safeUriActions,
+            Set<COSBase> inspected) {
+        COSBase resolved = dereference(value);
+        if (resolved == null || !inspected.add(resolved)) {
+            return;
+        }
+        if (resolved instanceof COSDictionary dictionary) {
+            validatePdfDictionary(dictionary, safeUriActions);
+            dictionary.getValues().forEach(
+                    child -> validatePdfObjectGraph(child, safeUriActions, inspected));
+        } else if (resolved instanceof COSArray array) {
+            array.forEach(
+                    child -> validatePdfObjectGraph(child, safeUriActions, inspected));
+        }
+    }
+
+    private void validatePdfDictionary(
+            COSDictionary dictionary, Set<COSDictionary> safeUriActions) {
+        if (safeUriActions.contains(dictionary)) {
+            return;
+        }
+        if (FORBIDDEN_PDF_DICTIONARY_KEYS.stream().anyMatch(dictionary::containsKey)) {
+            throw unsafePdf();
+        }
+        String type = dictionary.getNameAsString(COSName.TYPE);
+        String subtype = dictionary.getNameAsString(COSName.SUBTYPE);
+        String actionSubtype = dictionary.getNameAsString(COSName.S);
+        if ("Action".equals(type)
+                || "Filespec".equals(type)
+                || "EmbeddedFile".equals(type)
+                || "EmbeddedFile".equals(subtype)
+                || (actionSubtype != null && PDF_ACTION_SUBTYPES.contains(actionSubtype))
+                || ("Catalog".equals(type) && dictionary.containsKey(COSName.URI))) {
+            throw unsafePdf();
+        }
+    }
+
+    private COSBase dereference(COSBase value) {
+        return value instanceof COSObject object ? object.getObject() : value;
+    }
+
+    private IllegalArgumentException unsafePdf() {
+        return new IllegalArgumentException(
+                "PDF active, encrypted or external content is not supported");
     }
 
     private boolean isSupportedPdfVersion(byte[] content) {

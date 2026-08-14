@@ -102,6 +102,30 @@ class DocumentStorageReconcilerIntegrationTest {
     }
 
     @Test
+    void generatedHttpsLinkedPdfRemainsAvailableAfterStoredByteReconciliation() {
+        UUID documentId = createDocument("linked-pdf-reconciliation-parent");
+        var file = fileService.createDocumentFile(
+                OWNER,
+                fileRequest(
+                        documentId,
+                        TestDocumentFiles.pdfWithUriLinks(
+                                "https://github.com/jobseekercopilot")),
+                "linked-pdf-reconciliation-file");
+
+        DocumentStorageReconciliationReport report = reconciler.reconcile();
+
+        assertThat(report.availableInspected()).isEqualTo(1);
+        assertThat(report.metadataQuarantined()).isZero();
+        assertThat(fileRepository.findById(file.getId()))
+                .get()
+                .satisfies(metadata -> {
+                    assertThat(metadata.getStorageStatus())
+                            .isEqualTo(ObjectStorageStatus.AVAILABLE);
+                    assertThat(metadata.isActive()).isTrue();
+                });
+    }
+
+    @Test
     void preparedOrphanIsRemovedAndRolledBackIdempotently() {
         UUID documentId = createDocument("prepared-orphan-parent");
         UUID fileId = UUID.randomUUID();

@@ -51,6 +51,8 @@ it is not served.
 | One expanded DOCX entry | 10 MiB | `DOCUMENT_STORE_MAXIMUM_DOCX_ENTRY_BYTES` |
 | All expanded DOCX entries | 25 MiB | `DOCUMENT_STORE_MAXIMUM_DOCX_EXPANDED_BYTES` |
 | DOCX expansion ratio | 100:1 | `DOCUMENT_STORE_MAXIMUM_DOCX_EXPANSION_RATIO` |
+| PDF external link annotations | 64 | `DOCUMENT_STORE_MAXIMUM_PDF_LINK_ANNOTATIONS` |
+| One PDF link target | 2,048 characters | `DOCUMENT_STORE_MAXIMUM_PDF_LINK_TARGET_CHARACTERS` |
 
 All limits must be positive. Infrastructure must review any increase against
 application memory, servlet buffering and downstream rendering limits.
@@ -68,12 +70,27 @@ accepted there; HTTP, credential-bearing and every other external relationship
 remain rejected. User replacement and application-upload paths continue to
 reject all external relationships.
 
-PDF must have a supported `%PDF-1.0` through `%PDF-1.7` or `%PDF-2.0` header
-and a terminal `%%EOF`. The private-beta generated-file path rejects obvious
-encryption, JavaScript, launch actions, embedded files and automatic actions.
+PDF must have a supported `%PDF-1.0` through `%PDF-1.7` or `%PDF-2.0` header,
+a terminal `%%EOF` and a structure that PDFBox can parse. Generated and
+stored-byte validation makes one narrow external-content exception: a bounded
+page annotation whose subtype is `Link` and whose sole action is a standard
+`URI` action. Its target must be absolute HTTPS with a non-blank host, no user
+information, no literal or percent-encoded control characters and no more than
+the configured target length. Action chains, mouse-position mapping,
+destinations, previous/additional actions and annotations other than this exact
+shape are rejected. The configured annotation count bounds the whole file.
+
+Structural inspection continues to reject encryption, JavaScript, launch and
+every non-URI action, open/page/annotation additional actions, forms, embedded
+or associated files and URI actions outside the validated page links. It does
+not scan for substrings, so a benign resource name such as an embedded font
+beginning `AAAAAA` cannot impersonate the real `/AA` dictionary key.
+
 PDF is accepted from the generated producer path or the producer-only secure
-application-upload path. The legacy browser replacement route remains DOCX
-only.
+application-upload path. Application-upload validation rejects every
+annotation and external or active construct before scanning; the exception
+above applies only to generated and stored-byte validation. The legacy browser
+replacement route remains DOCX only and therefore rejects every PDF.
 
 Filenames reject blank or overlong values, Unicode normalization changes,
 control/format characters, path separators, drive/alternate-stream separators

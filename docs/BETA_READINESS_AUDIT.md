@@ -87,9 +87,14 @@ traversal, duplicates, corrupt XML/archives, macros, password-protected
 packages, embedded/ActiveX content, unsafe external relationships and imported
 content. Credential-free HTTPS hyperlink relationships are the sole external
 DOCX relationship exception for generated and stored-byte validation; upload
-validation still rejects every external relationship. Generated PDFs require a
-supported signature/trailer and reject
-obvious encryption and active-content tokens.
+validation still rejects every external relationship. Generated and
+stored-byte PDF validation has the corresponding bounded exception for a
+standard page `Link` annotation with one credential-free, host-bearing HTTPS
+`URI` action. PDFBox structural inspection rejects encryption, JavaScript,
+forms, embedded files, additional/automatic/action-chain behaviour and every
+other annotation or action. Application-upload validation rejects all PDF
+annotations and external/active constructs, while browser replacement remains
+DOCX-only.
 
 Caller names and MIME values are treated as untrusted. Only canonical MIME
 values and `document-<file UUID>.<extension>` names are stored and returned.

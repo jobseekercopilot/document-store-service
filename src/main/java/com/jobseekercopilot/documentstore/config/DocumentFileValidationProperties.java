@@ -26,4 +26,10 @@ public class DocumentFileValidationProperties {
 
     @Min(1)
     private int maximumDocxExpansionRatio = 100;
+
+    @Min(1)
+    private int maximumPdfLinkAnnotations = 64;
+
+    @Min(1)
+    private int maximumPdfLinkTargetCharacters = 2048;
 }

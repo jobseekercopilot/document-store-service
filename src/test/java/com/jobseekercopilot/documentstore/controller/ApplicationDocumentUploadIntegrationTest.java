@@ -340,6 +340,19 @@ class ApplicationDocumentUploadIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("REJECTED"))
                 .andExpect(jsonPath("$.failureCode").value("VALIDATION_REJECTED"));
+        upload(
+                "upload-owner-linked-pdf",
+                UUID.randomUUID().toString(),
+                "CV",
+                "PDF",
+                "cv.pdf",
+                "application/pdf",
+                TestDocumentFiles.pdfWithUriLinks(
+                        "https://github.com/jobseekercopilot"),
+                "linked-pdf-key")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("REJECTED"))
+                .andExpect(jsonPath("$.failureCode").value("VALIDATION_REJECTED"));
         verify(malwareScanner, never()).scan(any());
 
         cleanScanner();

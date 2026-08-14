@@ -11,16 +11,18 @@ See the central [document journey](https://docs.jobseekercopilot.com/journeys/do
 Persistence service for generated CV and cover-letter text, relational file
 metadata, and private object-backed DOCX/PDF bytes.
 
-This service is **not beta-ready**. Its producer-side API authenticates callers
-and enforces document/file ownership, while its runtime storage boundary now
+This service is implemented and exercised for controlled private-beta document
+families, versions, downloads and upload scanning. Its producer-side API
+authenticates callers and enforces document/file ownership, while its production storage boundary
 fails closed unless durable PostgreSQL, verified TLS, managed credentials,
 managed encryption/key references, encrypted backups and reviewed Flyway
 migrations are configured. Version families now have transaction-scoped
 locking, database uniqueness, retry keys and explicit restoration. Production
 file writes additionally require a
-private S3-compatible bucket and managed SSE-KMS key. Approved consumers and
-Infrastructure have not completed identity, secret/key, bucket and deployment
-rollout. DOC-09 policy is approved and cross-service tombstone/hash-scrubbing
+private S3-compatible bucket and managed SSE-KMS key. Local Compose uses
+persistent PostgreSQL, filesystem object bytes and ClamAV; production still
+requires the managed identity, secret/key, bucket and backup rollout described
+below. DOC-09 policy is approved and cross-service tombstone/hash-scrubbing
 guards now exist in the repository, but the client recovery journey,
 production backup/object/log expiry, administrator deployment, integrated
 consumer idempotency and deployed reconciliation alerting remain open. See

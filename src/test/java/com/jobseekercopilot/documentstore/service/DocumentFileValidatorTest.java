@@ -3,6 +3,7 @@ package com.jobseekercopilot.documentstore.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.jobseekercopilot.documentstore.TestDocumentFiles;
 import com.jobseekercopilot.documentstore.config.DocumentFileValidationProperties;
 import com.jobseekercopilot.documentstore.entity.FileType;
 import com.jobseekercopilot.documentstore.exception.DocumentFileTooLargeException;
@@ -11,10 +12,26 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.encryption.AccessPermission;
+import org.apache.pdfbox.pdmodel.encryption.StandardProtectionPolicy;
+import org.apache.pdfbox.pdmodel.interactive.action.PDAction;
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionJavaScript;
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionLaunch;
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionURI;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText;
+import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -163,16 +180,161 @@ class DocumentFileValidatorTest {
                         "%PDF-1.7\nmissing trailer".getBytes(StandardCharsets.ISO_8859_1)))
                 .hasMessage("PDF file is corrupt or incomplete");
 
-        for (String token : new String[] {"/Encrypt", "/JavaScript", "/Launch"}) {
-            byte[] content = ("%PDF-1.7\n" + token + "\n%%EOF\n")
-                    .getBytes(StandardCharsets.ISO_8859_1);
+        for (byte[] content : new byte[][] {
+            encryptedPdf(),
+            pdfWithLinkAction(new PDActionJavaScript("app.alert('unsafe')")),
+            pdfWithLinkAction(launchAction()),
+            pdfWithMutation(document -> document.getDocumentCatalog()
+                    .setAcroForm(new PDAcroForm(document))),
+            pdfWithMutation(document -> {
+                COSDictionary names = new COSDictionary();
+                names.setItem(COSName.EMBEDDED_FILES, new COSDictionary());
+                document.getDocumentCatalog().getCOSObject()
+                        .setItem(COSName.NAMES, names);
+            })
+        }) {
             assertThatThrownBy(() -> validator.validateGenerated(
                             FileType.PDF,
                             "generated.pdf",
                             DocumentFileValidator.PDF_MIME_TYPE,
                             content))
-                    .hasMessage("PDF active or encrypted content is not supported");
+                    .hasMessage(
+                            "PDF active, encrypted or external content is not supported");
         }
+    }
+
+    @Test
+    void pdfCredentialFreeHttpsUriLinksAreAcceptedForGeneratedAndStoredBytes() {
+        byte[] linkedPdf = TestDocumentFiles.pdfWithUriLinks(
+                "https://github.com/jobseekercopilot",
+                "https://drive.google.com/drive/folders/example?usp=sharing#portfolio");
+
+        validator.validateGenerated(
+                FileType.PDF,
+                "generated.pdf",
+                DocumentFileValidator.PDF_MIME_TYPE,
+                linkedPdf);
+        validator.validateStored(FileType.PDF, linkedPdf);
+    }
+
+    @Test
+    void pdfBenignAaaaaaFontNameDoesNotImpersonateAdditionalActions() {
+        byte[] pdf = TestDocumentFiles.pdfWithBenignAaaaaaFontResource();
+        assertThat(new String(pdf, StandardCharsets.ISO_8859_1)).contains("/AAAAAA+");
+
+        validator.validateGenerated(
+                FileType.PDF,
+                "generated.pdf",
+                DocumentFileValidator.PDF_MIME_TYPE,
+                pdf);
+        validator.validateStored(FileType.PDF, pdf);
+    }
+
+    @Test
+    void pdfRealAdditionalActionDictionaryRemainsRejected() {
+        PDActionURI action = uriAction("https://example.invalid/profile");
+        byte[] pdf = pdfWithLinkAction(action, link -> {
+            COSDictionary additionalActions = new COSDictionary();
+            additionalActions.setItem(
+                    COSName.getPDFName("E"),
+                    new PDActionJavaScript("app.alert('unsafe')"));
+            link.getCOSObject().setItem(COSName.AA, additionalActions);
+        });
+
+        assertThatThrownBy(() -> validator.validateGenerated(
+                        FileType.PDF,
+                        "generated.pdf",
+                        DocumentFileValidator.PDF_MIME_TYPE,
+                        pdf))
+                .hasMessage("PDF active, encrypted or external content is not supported");
+        assertThatThrownBy(() -> validator.validateStored(FileType.PDF, pdf))
+                .hasMessage("PDF active, encrypted or external content is not supported");
+    }
+
+    @Test
+    void pdfUnsafeUriTargetsAndNonUriActionsAreRejected() {
+        for (String target : new String[] {
+            "http://example.invalid/profile",
+            "mailto:recruiter@example.invalid",
+            "/relative/profile",
+            "https:/missing-authority",
+            "https://user:password@example.invalid/profile",
+            "https://@example.invalid/profile",
+            "https://example.invalid/profile%0Ainjected",
+            "https://example.invalid/profile\ninjected",
+            "https://example.invalid/profile\u202Einjected"
+        }) {
+            byte[] pdf = TestDocumentFiles.pdfWithUriLinks(target);
+            assertThatThrownBy(() -> validator.validateGenerated(
+                            FileType.PDF,
+                            "generated.pdf",
+                            DocumentFileValidator.PDF_MIME_TYPE,
+                            pdf))
+                    .hasMessage(
+                            "PDF active, encrypted or external content is not supported");
+        }
+
+        PDActionURI chainedUri = uriAction("https://example.invalid/profile");
+        chainedUri.setNext(List.of(new PDActionJavaScript("app.alert('unsafe')")));
+        for (byte[] pdf : new byte[][] {
+            pdfWithLinkAction(new PDActionJavaScript("app.alert('unsafe')")),
+            pdfWithLinkAction(launchAction()),
+            pdfWithLinkAction(chainedUri),
+            pdfWithLinkAction(null),
+            pdfWithTextAnnotation(),
+            pdfWithMutation(document -> document.getDocumentCatalog()
+                    .setOpenAction(uriAction("https://example.invalid/profile")))
+        }) {
+            assertThatThrownBy(() -> validator.validateGenerated(
+                            FileType.PDF,
+                            "generated.pdf",
+                            DocumentFileValidator.PDF_MIME_TYPE,
+                            pdf))
+                    .hasMessage(
+                            "PDF active, encrypted or external content is not supported");
+        }
+    }
+
+    @Test
+    void pdfLinkCountAndTargetLengthLimitsAreEnforced() {
+        properties.setMaximumPdfLinkAnnotations(1);
+        assertThatThrownBy(() -> validator.validateGenerated(
+                        FileType.PDF,
+                        "generated.pdf",
+                        DocumentFileValidator.PDF_MIME_TYPE,
+                        TestDocumentFiles.pdfWithUriLinks(
+                                "https://example.invalid/one",
+                                "https://example.invalid/two")))
+                .hasMessage("PDF contains too many external link annotations");
+
+        properties.setMaximumPdfLinkAnnotations(64);
+        properties.setMaximumPdfLinkTargetCharacters(24);
+        assertThatThrownBy(() -> validator.validateGenerated(
+                        FileType.PDF,
+                        "generated.pdf",
+                        DocumentFileValidator.PDF_MIME_TYPE,
+                        TestDocumentFiles.pdfWithUriLinks(
+                                "https://example.invalid/profile")))
+                .hasMessage("PDF active, encrypted or external content is not supported");
+    }
+
+    @Test
+    void pdfExternalLinksRemainRejectedForReplacementAndApplicationUploads() {
+        byte[] linkedPdf = TestDocumentFiles.pdfWithUriLinks(
+                "https://github.com/jobseekercopilot");
+
+        assertThatThrownBy(() -> validator.validateUserUpload(
+                        FileType.PDF,
+                        "replacement.pdf",
+                        DocumentFileValidator.PDF_MIME_TYPE,
+                        linkedPdf))
+                .hasMessage("Private beta replacement uploads support DOCX only");
+        assertThatThrownBy(() -> validator.validateApplicationUpload(
+                        FileType.PDF,
+                        "application.pdf",
+                        DocumentFileValidator.PDF_MIME_TYPE,
+                        linkedPdf))
+                .hasMessage("PDF active, encrypted or external content is not supported");
     }
 
     @Test
@@ -195,15 +357,92 @@ class DocumentFileValidatorTest {
     }
 
     @Test
-    void docxExternalRelationshipsAndImportedContentAreRejected() {
+    void docxCredentialFreeHttpsHyperlinkRelationshipsAreAccepted() {
         String externalRelationships = """
                 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-                  <Relationship Id="rId1" TargetMode="External" Target="https://example.invalid"/>
+                  <Relationship Id="rId1" TargetMode="External"
+                    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+                    Target="https://github.com/jobseekercopilot"/>
+                  <Relationship Id="rId2" TargetMode="External"
+                    Type="http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink"
+                    Target="https://drive.google.com/drive/folders/example?usp=sharing"/>
                 </Relationships>
                 """;
-        assertInvalidDocx(
-                entries("word/_rels/document.xml.rels", externalRelationships),
-                "DOCX external relationships are not supported");
+        byte[] linkedDocx =
+                docx(entries("word/_rels/document.xml.rels", externalRelationships));
+        validator.validateGenerated(
+                FileType.DOCX,
+                "generated.docx",
+                DocumentFileValidator.DOCX_MIME_TYPE,
+                linkedDocx);
+        validator.validateStored(FileType.DOCX, linkedDocx);
+    }
+
+    @Test
+    void docxExternalHyperlinksRemainRejectedForUserAndApplicationUploads() {
+        String externalRelationships = """
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="rId1" TargetMode="External"
+                    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+                    Target="https://github.com/jobseekercopilot"/>
+                </Relationships>
+                """;
+        byte[] linkedDocx =
+                docx(entries("word/_rels/document.xml.rels", externalRelationships));
+
+        assertThatThrownBy(() -> validator.validateUserUpload(
+                        FileType.DOCX,
+                        "replacement.docx",
+                        DocumentFileValidator.DOCX_MIME_TYPE,
+                        linkedDocx))
+                .hasMessage("DOCX external relationships are not supported");
+        assertThatThrownBy(() -> validator.validateApplicationUpload(
+                        FileType.DOCX,
+                        "application.docx",
+                        DocumentFileValidator.DOCX_MIME_TYPE,
+                        linkedDocx))
+                .hasMessage("DOCX external relationships are not supported");
+    }
+
+    @Test
+    void docxNonHttpsCredentialedAndNonHyperlinkExternalRelationshipsAreRejected() {
+        for (ExternalRelationship relationship : new ExternalRelationship[] {
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "http://example.invalid"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "mailto:recruiter@example.invalid"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "/relative/profile"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "https:/missing-authority"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "https://user:password@example.invalid/profile"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "https://@example.invalid/profile"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+                    "https://example.invalid/image.png"),
+            new ExternalRelationship("", "https://example.invalid")
+        }) {
+            String externalRelationships = """
+                    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                      <Relationship Id="rId1" TargetMode="External" Type="%s" Target="%s"/>
+                    </Relationships>
+                    """.formatted(relationship.type(), relationship.target());
+            assertInvalidDocx(
+                    entries("word/_rels/document.xml.rels", externalRelationships),
+                    "DOCX supports only credential-free HTTPS hyperlink relationships");
+        }
+    }
+
+    @Test
+    void docxImportedContentIsRejected() {
 
         String importedDocument = """
                 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -296,8 +535,69 @@ class DocumentFileValidatorTest {
     }
 
     private static byte[] validPdf() {
-        return "%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n"
-                .getBytes(StandardCharsets.ISO_8859_1);
+        return TestDocumentFiles.validPdf();
+    }
+
+    private static PDActionURI uriAction(String target) {
+        PDActionURI action = new PDActionURI();
+        action.setURI(target);
+        return action;
+    }
+
+    private static PDActionLaunch launchAction() {
+        PDActionLaunch action = new PDActionLaunch();
+        action.setF("unsafe-application");
+        return action;
+    }
+
+    private static byte[] pdfWithLinkAction(PDAction action) {
+        return pdfWithLinkAction(action, link -> {});
+    }
+
+    private static byte[] pdfWithLinkAction(
+            PDAction action, Consumer<PDAnnotationLink> linkCustomizer) {
+        return pdfWithMutation(document -> {
+            PDAnnotationLink link = new PDAnnotationLink();
+            link.setRectangle(new PDRectangle(72, 680, 240, 16));
+            if (action != null) {
+                link.setAction(action);
+            }
+            linkCustomizer.accept(link);
+            document.getPage(0).setAnnotations(List.of(link));
+        });
+    }
+
+    private static byte[] pdfWithTextAnnotation() {
+        return pdfWithMutation(document -> {
+            PDAnnotationText annotation = new PDAnnotationText();
+            annotation.setRectangle(new PDRectangle(72, 680, 24, 24));
+            annotation.setContents("Synthetic note");
+            document.getPage(0).setAnnotations(List.of(annotation));
+        });
+    }
+
+    private static byte[] encryptedPdf() {
+        return pdfWithMutation(document -> {
+            try {
+                document.protect(new StandardProtectionPolicy(
+                        "synthetic-owner-password",
+                        "synthetic-user-password",
+                        new AccessPermission()));
+            } catch (IOException exception) {
+                throw new IllegalStateException(exception);
+            }
+        });
+    }
+
+    private static byte[] pdfWithMutation(Consumer<PDDocument> mutation) {
+        try (PDDocument document = Loader.loadPDF(TestDocumentFiles.validPdf());
+                ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            mutation.accept(document);
+            document.save(output);
+            return output.toByteArray();
+        } catch (IOException exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 
     private static byte[] validDocx() {
@@ -335,6 +635,8 @@ class DocumentFileValidatorTest {
     private static byte[] bytes(String content) {
         return content.getBytes(StandardCharsets.UTF_8);
     }
+
+    private record ExternalRelationship(String type, String target) {}
 
     private static final class MediaTypes {
         private static final String OCTET_STREAM = "application/octet-stream";

@@ -77,6 +77,8 @@ document-store:
     maximum-docx-entry-bytes: ${DOCUMENT_STORE_MAXIMUM_DOCX_ENTRY_BYTES:10485760}
     maximum-docx-expanded-bytes: ${DOCUMENT_STORE_MAXIMUM_DOCX_EXPANDED_BYTES:26214400}
     maximum-docx-expansion-ratio: ${DOCUMENT_STORE_MAXIMUM_DOCX_EXPANSION_RATIO:100}
+    maximum-pdf-link-annotations: ${DOCUMENT_STORE_MAXIMUM_PDF_LINK_ANNOTATIONS:64}
+    maximum-pdf-link-target-characters: ${DOCUMENT_STORE_MAXIMUM_PDF_LINK_TARGET_CHARACTERS:2048}
   upload:
     maximum-families-per-owner: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_FAMILIES:100}
     maximum-versions-per-family: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_VERSIONS_PER_FAMILY:20}

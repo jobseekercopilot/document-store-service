@@ -168,6 +168,33 @@ class DocumentFileControllerIntegrationTest {
     }
 
     @Test
+    void generatedHttpsLinkedPdfIsStoredAndRevalidatedOnDownload() throws Exception {
+        byte[] content = TestDocumentFiles.pdfWithUriLinks(
+                "https://github.com/jobseekercopilot",
+                "https://drive.google.com/drive/folders/example?usp=sharing");
+        UUID fileId = createFile(saveDocument().getId(), "portfolio.pdf", content);
+
+        byte[] actual = mockMvc.perform(
+                        get("/api/v1/document-files/{id}/download", fileId)
+                                .header(
+                                        DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                        PRODUCER_TOKEN)
+                                .header(
+                                        DocumentOwnerResolver.OWNER_HEADER,
+                                        "user-123"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_TYPE, PDF_MIME_TYPE))
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
+
+        assertArrayEquals(content, actual);
+        assertEquals(
+                ObjectStorageStatus.AVAILABLE,
+                fileRepository.findById(fileId).orElseThrow().getStorageStatus());
+    }
+
+    @Test
     void downloadExactHistoricArtifact_ShouldReturnBytesWithoutChangingStoredState()
             throws Exception {
         GeneratedDocument document = saveDocument();
@@ -456,7 +483,8 @@ class DocumentFileControllerIntegrationTest {
                 "file",
                 "replacement.pdf",
                 MediaType.APPLICATION_PDF_VALUE,
-                TestDocumentFiles.validPdf());
+                TestDocumentFiles.pdfWithUriLinks(
+                        "https://github.com/jobseekercopilot"));
 
         mockMvc.perform(multipart(
                                 "/api/v1/documents/{generatedDocumentId}/files/upload",

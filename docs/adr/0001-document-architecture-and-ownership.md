@@ -295,7 +295,7 @@ complete evidence for those implementations.
 | Concurrent replace/activate | No duplicate version number or unintended multiple current versions; conflicts are deterministic | STORE-03 |
 | Archive/delete/retention | Protected application-used versions survive inappropriate purge; authorized archive, restore and purge are idempotent/audited | DOC-09 |
 | Restart/backup/restore | Metadata, bytes, versions and links survive restart and a tested restore with checksum integrity | DOC-03, STORE-02 |
-| Hostile/oversized upload | Spoofed MIME, corrupt PDF/DOCX, macros, external relationships, archive bombs and limit violations fail before state mutation | DOC-05, EXPORT-02 |
+| Hostile/oversized upload | Spoofed MIME, corrupt PDF/DOCX, macros, external relationships, archive bombs and limit violations fail before state mutation; only generated or stored credential-free HTTPS DOCX relationships and bounded PDF URI link annotations are accepted | DOC-05, EXPORT-02 |
 | Format quality/accessibility | Synthetic documents preserve required text, links, metadata and extraction semantics across supported formats | DOC-07, EXPORT-02, EXPORT-03 |
 | Full browser journey | Authenticated generate, preview, approve, list, download, replace and historical application reference pass with isolated fixtures and negative cross-user cases | DOC-12, DOCGEN-23 |
 

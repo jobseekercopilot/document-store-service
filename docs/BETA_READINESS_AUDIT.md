@@ -84,8 +84,11 @@ validated generated DOCX/PDF, while browser replacement uploads are DOCX-only.
 Decoded and multipart byte limits are aligned; DOCX entry count, individual and
 total expansion and compression ratio are bounded. Inspection rejects
 traversal, duplicates, corrupt XML/archives, macros, password-protected
-packages, embedded/ActiveX content, external relationships and imported
-content. Generated PDFs require a supported signature/trailer and reject
+packages, embedded/ActiveX content, unsafe external relationships and imported
+content. Credential-free HTTPS hyperlink relationships are the sole external
+DOCX relationship exception for generated and stored-byte validation; upload
+validation still rejects every external relationship. Generated PDFs require a
+supported signature/trailer and reject
 obvious encryption and active-content tokens.
 
 Caller names and MIME values are treated as untrusted. Only canonical MIME

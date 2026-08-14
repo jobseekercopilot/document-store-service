@@ -61,7 +61,12 @@ DOCX must be a readable ZIP package with unique, traversal-safe entry names,
 `[Content_Types].xml`, `word/document.xml` and the standard non-macro main
 document content type. Inspection rejects excessive entry counts or expansion,
 DTD/entity input, macros, ActiveX, embedded/OLE content, encrypted packages,
-external relationships and imported `altChunk`/object/control content.
+imported `altChunk`/object/control content and external relationships. Generated
+and stored-byte validation makes one narrow exception for credential-free HTTPS
+hyperlinks. Both transitional and strict OOXML hyperlink relationship types are
+accepted there; HTTP, credential-bearing and every other external relationship
+remain rejected. User replacement and application-upload paths continue to
+reject all external relationships.
 
 PDF must have a supported `%PDF-1.0` through `%PDF-1.7` or `%PDF-2.0` header
 and a terminal `%%EOF`. The private-beta generated-file path rejects obvious

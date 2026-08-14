@@ -6,6 +6,8 @@ import com.jobseekercopilot.documentstore.exception.DocumentFileTooLargeExceptio
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
 import java.util.Base64;
@@ -40,6 +42,9 @@ public class DocumentFileValidator {
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
     private static final String CONTENT_TYPES_ENTRY = "[content_types].xml";
     private static final String DOCUMENT_ENTRY = "word/document.xml";
+    private static final Set<String> EXTERNAL_HYPERLINK_RELATIONSHIP_TYPES = Set.of(
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            "http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink");
     private static final int MAXIMUM_FILE_NAME_CHARACTERS = 255;
     private static final int MAXIMUM_ENTRY_NAME_CHARACTERS = 512;
     private static final int PDF_TRAILER_SEARCH_BYTES = 1024;
@@ -79,7 +84,7 @@ public class DocumentFileValidator {
             String fileName,
             String declaredMimeType,
             byte[] content) {
-        validate(fileType, fileName, declaredMimeType, content, false);
+        validate(fileType, fileName, declaredMimeType, content, false, true);
     }
 
     public void validateUserUpload(
@@ -91,7 +96,7 @@ public class DocumentFileValidator {
             throw new IllegalArgumentException(
                     "Private beta replacement uploads support DOCX only");
         }
-        validate(fileType, fileName, declaredMimeType, content, true);
+        validate(fileType, fileName, declaredMimeType, content, true, false);
     }
 
     public void validateApplicationUpload(
@@ -99,11 +104,11 @@ public class DocumentFileValidator {
             String fileName,
             String declaredMimeType,
             byte[] content) {
-        validate(fileType, fileName, declaredMimeType, content, true);
+        validate(fileType, fileName, declaredMimeType, content, true, false);
     }
 
     public void validateStored(FileType fileType, byte[] content) {
-        validateContent(fileType, content);
+        validateContent(fileType, content, true);
     }
 
     public void validateDeclaredSize(long fileSize) {
@@ -133,11 +138,12 @@ public class DocumentFileValidator {
             String fileName,
             String declaredMimeType,
             byte[] content,
-            boolean userUpload) {
+            boolean userUpload,
+            boolean allowSafeExternalHyperlinks) {
         requireSupportedType(fileType);
         validateFileName(fileName, fileType);
         validateDeclaredMimeType(declaredMimeType, fileType, userUpload);
-        validateContent(fileType, content);
+        validateContent(fileType, content, allowSafeExternalHyperlinks);
     }
 
     private void validateEncodedLength(String encodedContent) {
@@ -151,7 +157,8 @@ public class DocumentFileValidator {
         }
     }
 
-    private void validateContent(FileType fileType, byte[] content) {
+    private void validateContent(
+            FileType fileType, byte[] content, boolean allowSafeExternalHyperlinks) {
         if (content == null || content.length == 0) {
             throw new IllegalArgumentException("File content is required");
         }
@@ -160,7 +167,7 @@ public class DocumentFileValidator {
         }
         switch (fileType) {
             case PDF -> validatePdf(content);
-            case DOCX -> validateDocx(content);
+            case DOCX -> validateDocx(content, allowSafeExternalHyperlinks);
         }
     }
 
@@ -266,7 +273,7 @@ public class DocumentFileValidator {
         return false;
     }
 
-    private void validateDocx(byte[] content) {
+    private void validateDocx(byte[] content, boolean allowSafeExternalHyperlinks) {
         if (content.length < 4
                 || content[0] != 'P'
                 || content[1] != 'K'
@@ -328,7 +335,7 @@ public class DocumentFileValidator {
         validateDocumentXml(documentXml);
         inspectedEntries.forEach((name, bytes) -> {
             if (name.endsWith(".rels")) {
-                validateRelationships(bytes);
+                validateRelationships(bytes, allowSafeExternalHyperlinks);
             }
         });
     }
@@ -430,7 +437,8 @@ public class DocumentFileValidator {
         }
     }
 
-    private void validateRelationships(byte[] content) {
+    private void validateRelationships(
+            byte[] content, boolean allowSafeExternalHyperlinks) {
         Document document = parseXml(content);
         NodeList relationships =
                 document.getElementsByTagNameNS("*", "Relationship");
@@ -438,9 +446,32 @@ public class DocumentFileValidator {
             Element relationship = (Element) relationships.item(index);
             if ("external".equalsIgnoreCase(
                     relationship.getAttribute("TargetMode"))) {
-                throw new IllegalArgumentException(
-                        "DOCX external relationships are not supported");
+                if (!allowSafeExternalHyperlinks) {
+                    throw new IllegalArgumentException(
+                            "DOCX external relationships are not supported");
+                }
+                if (!isSafeExternalHyperlink(relationship)) {
+                    throw new IllegalArgumentException(
+                            "DOCX supports only credential-free HTTPS hyperlink relationships");
+                }
             }
+        }
+    }
+
+    private boolean isSafeExternalHyperlink(Element relationship) {
+        if (!EXTERNAL_HYPERLINK_RELATIONSHIP_TYPES.contains(
+                relationship.getAttribute("Type"))) {
+            return false;
+        }
+        try {
+            URI target = new URI(relationship.getAttribute("Target"));
+            return target.isAbsolute()
+                    && "https".equalsIgnoreCase(target.getScheme())
+                    && target.getHost() != null
+                    && !target.getHost().isBlank()
+                    && target.getRawUserInfo() == null;
+        } catch (URISyntaxException exception) {
+            return false;
         }
     }
 

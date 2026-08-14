@@ -195,15 +195,92 @@ class DocumentFileValidatorTest {
     }
 
     @Test
-    void docxExternalRelationshipsAndImportedContentAreRejected() {
+    void docxCredentialFreeHttpsHyperlinkRelationshipsAreAccepted() {
         String externalRelationships = """
                 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-                  <Relationship Id="rId1" TargetMode="External" Target="https://example.invalid"/>
+                  <Relationship Id="rId1" TargetMode="External"
+                    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+                    Target="https://github.com/jobseekercopilot"/>
+                  <Relationship Id="rId2" TargetMode="External"
+                    Type="http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink"
+                    Target="https://drive.google.com/drive/folders/example?usp=sharing"/>
                 </Relationships>
                 """;
-        assertInvalidDocx(
-                entries("word/_rels/document.xml.rels", externalRelationships),
-                "DOCX external relationships are not supported");
+        byte[] linkedDocx =
+                docx(entries("word/_rels/document.xml.rels", externalRelationships));
+        validator.validateGenerated(
+                FileType.DOCX,
+                "generated.docx",
+                DocumentFileValidator.DOCX_MIME_TYPE,
+                linkedDocx);
+        validator.validateStored(FileType.DOCX, linkedDocx);
+    }
+
+    @Test
+    void docxExternalHyperlinksRemainRejectedForUserAndApplicationUploads() {
+        String externalRelationships = """
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="rId1" TargetMode="External"
+                    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+                    Target="https://github.com/jobseekercopilot"/>
+                </Relationships>
+                """;
+        byte[] linkedDocx =
+                docx(entries("word/_rels/document.xml.rels", externalRelationships));
+
+        assertThatThrownBy(() -> validator.validateUserUpload(
+                        FileType.DOCX,
+                        "replacement.docx",
+                        DocumentFileValidator.DOCX_MIME_TYPE,
+                        linkedDocx))
+                .hasMessage("DOCX external relationships are not supported");
+        assertThatThrownBy(() -> validator.validateApplicationUpload(
+                        FileType.DOCX,
+                        "application.docx",
+                        DocumentFileValidator.DOCX_MIME_TYPE,
+                        linkedDocx))
+                .hasMessage("DOCX external relationships are not supported");
+    }
+
+    @Test
+    void docxNonHttpsCredentialedAndNonHyperlinkExternalRelationshipsAreRejected() {
+        for (ExternalRelationship relationship : new ExternalRelationship[] {
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "http://example.invalid"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "mailto:recruiter@example.invalid"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "/relative/profile"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "https:/missing-authority"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "https://user:password@example.invalid/profile"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                    "https://@example.invalid/profile"),
+            new ExternalRelationship(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+                    "https://example.invalid/image.png"),
+            new ExternalRelationship("", "https://example.invalid")
+        }) {
+            String externalRelationships = """
+                    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                      <Relationship Id="rId1" TargetMode="External" Type="%s" Target="%s"/>
+                    </Relationships>
+                    """.formatted(relationship.type(), relationship.target());
+            assertInvalidDocx(
+                    entries("word/_rels/document.xml.rels", externalRelationships),
+                    "DOCX supports only credential-free HTTPS hyperlink relationships");
+        }
+    }
+
+    @Test
+    void docxImportedContentIsRejected() {
 
         String importedDocument = """
                 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -335,6 +412,8 @@ class DocumentFileValidatorTest {
     private static byte[] bytes(String content) {
         return content.getBytes(StandardCharsets.UTF_8);
     }
+
+    private record ExternalRelationship(String type, String target) {}
 
     private static final class MediaTypes {
         private static final String OCTET_STREAM = "application/octet-stream";

@@ -1,9 +1,12 @@
 package com.jobseekercopilot.documentstore.storage;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
@@ -19,6 +22,13 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.DeleteMarkerEntry;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectVersionsRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectVersionsResponse;
+import software.amazon.awssdk.services.s3.model.ObjectVersion;
 
 class S3DocumentObjectStorageTest {
     @Test
@@ -105,5 +115,145 @@ class S3DocumentObjectStorageTest {
                 ArgumentCaptor.forClass(ListObjectsV2Request.class);
         verify(client).listObjectsV2(request.capture());
         assertThat(request.getValue().startAfter()).isNull();
+    }
+
+    @Test
+    void permanentlyDeletesEveryExactKeyVersionAndDeleteMarkerThenVerifiesAbsence() {
+        S3Client client = mock(S3Client.class);
+        String key = "quarantine/application-uploads/10000000-0000-4000-8000-000000000001";
+        when(client.listObjectVersions(any(ListObjectVersionsRequest.class)))
+                .thenReturn(
+                        ListObjectVersionsResponse.builder()
+                                .versions(
+                                        ObjectVersion.builder()
+                                                .key(key)
+                                                .versionId("version-2")
+                                                .build(),
+                                        ObjectVersion.builder()
+                                                .key(key + "-foreign")
+                                                .versionId("foreign-version")
+                                                .build())
+                                .deleteMarkers(DeleteMarkerEntry.builder()
+                                        .key(key)
+                                        .versionId("delete-marker-1")
+                                        .build())
+                                .isTruncated(false)
+                                .build(),
+                        ListObjectVersionsResponse.builder()
+                                .isTruncated(false)
+                                .build());
+        when(client.deleteObject(any(DeleteObjectRequest.class)))
+                .thenReturn(DeleteObjectResponse.builder().build());
+
+        int deleted = new S3DocumentObjectStorage(
+                        client, "private-documents", "managed-key-id")
+                .permanentlyDeleteKey(key);
+
+        assertThat(deleted).isEqualTo(2);
+        ArgumentCaptor<DeleteObjectRequest> deletes =
+                ArgumentCaptor.forClass(DeleteObjectRequest.class);
+        verify(client, times(2)).deleteObject(deletes.capture());
+        assertThat(deletes.getAllValues())
+                .extracting(DeleteObjectRequest::key, DeleteObjectRequest::versionId)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(key, "version-2"),
+                        org.assertj.core.groups.Tuple.tuple(key, "delete-marker-1"));
+        assertThat(deletes.getAllValues())
+                .noneMatch(request -> request.key().endsWith("-foreign"));
+    }
+
+    @Test
+    void permanentlyDeletesOnlyTheExactBoundedDocumentPrefixAcrossPages() {
+        S3Client client = mock(S3Client.class);
+        String prefix = "documents/10000000-0000-4000-8000-000000000001/";
+        when(client.listObjectVersions(any(ListObjectVersionsRequest.class)))
+                .thenReturn(
+                        ListObjectVersionsResponse.builder()
+                                .versions(ObjectVersion.builder()
+                                        .key(prefix + "files/a/v1")
+                                        .versionId("v1")
+                                        .build())
+                                .isTruncated(true)
+                                .nextKeyMarker(prefix + "files/a/v1")
+                                .nextVersionIdMarker("v1")
+                                .build(),
+                        ListObjectVersionsResponse.builder()
+                                .deleteMarkers(DeleteMarkerEntry.builder()
+                                        .key(prefix + "files/b/v2")
+                                        .versionId("marker")
+                                        .build())
+                                .isTruncated(false)
+                                .build(),
+                        ListObjectVersionsResponse.builder()
+                                .isTruncated(false)
+                                .build());
+        when(client.deleteObject(any(DeleteObjectRequest.class)))
+                .thenReturn(DeleteObjectResponse.builder().build());
+
+        int deleted = new S3DocumentObjectStorage(
+                        client, "private-documents", "managed-key-id")
+                .permanentlyDeletePrefix(prefix);
+
+        assertThat(deleted).isEqualTo(2);
+        ArgumentCaptor<ListObjectVersionsRequest> lists =
+                ArgumentCaptor.forClass(ListObjectVersionsRequest.class);
+        verify(client, times(3)).listObjectVersions(lists.capture());
+        assertThat(lists.getAllValues())
+                .allMatch(request -> request.bucket().equals("private-documents")
+                        && request.prefix().equals(prefix)
+                        && request.maxKeys() == 1000);
+        assertThat(lists.getAllValues().get(1).keyMarker())
+                .isEqualTo(prefix + "files/a/v1");
+        assertThat(lists.getAllValues().get(1).versionIdMarker())
+                .isEqualTo("v1");
+    }
+
+    @Test
+    void permanentErasureRejectsBroadOrForeignScopesBeforeCallingS3() {
+        S3Client client = mock(S3Client.class);
+        S3DocumentObjectStorage storage = new S3DocumentObjectStorage(
+                client, "private-documents", "managed-key-id");
+
+        assertThatThrownBy(() -> storage.permanentlyDeletePrefix("documents/"))
+                .isInstanceOf(ObjectStorageException.class);
+        assertThatThrownBy(() -> storage.permanentlyDeleteKey("other/private"))
+                .isInstanceOf(ObjectStorageException.class);
+    }
+
+    @Test
+    void deniedVersionEnumerationOrDeletionFailsClosed() {
+        String prefix = "documents/10000000-0000-4000-8000-000000000001/";
+        S3Client listDenied = mock(S3Client.class);
+        when(listDenied.listObjectVersions(any(ListObjectVersionsRequest.class)))
+                .thenThrow(S3Exception.builder()
+                        .statusCode(403)
+                        .message("access denied")
+                        .build());
+        assertThatThrownBy(() -> new S3DocumentObjectStorage(
+                        listDenied, "private-documents", "managed-key-id")
+                .permanentlyDeletePrefix(prefix))
+                .isInstanceOf(ObjectStorageException.class)
+                .hasMessageContaining("enumerate");
+        verify(listDenied, never()).deleteObject(any(DeleteObjectRequest.class));
+
+        S3Client deleteDenied = mock(S3Client.class);
+        when(deleteDenied.listObjectVersions(any(ListObjectVersionsRequest.class)))
+                .thenReturn(ListObjectVersionsResponse.builder()
+                        .versions(ObjectVersion.builder()
+                                .key(prefix + "files/a/v1")
+                                .versionId("v1")
+                                .build())
+                        .isTruncated(false)
+                        .build());
+        when(deleteDenied.deleteObject(any(DeleteObjectRequest.class)))
+                .thenThrow(S3Exception.builder()
+                        .statusCode(403)
+                        .message("access denied")
+                        .build());
+        assertThatThrownBy(() -> new S3DocumentObjectStorage(
+                        deleteDenied, "private-documents", "managed-key-id")
+                .permanentlyDeletePrefix(prefix))
+                .isInstanceOf(ObjectStorageException.class)
+                .hasMessageContaining("permanently delete");
     }
 }

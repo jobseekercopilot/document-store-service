@@ -50,11 +50,13 @@ public class DocumentRetentionService {
     private final ApplicationAssociationClient applicationAssociationClient;
     private final DocumentFileLifecycleService fileLifecycleService;
     private final DocumentOperationLock operationLock;
+    private final DocumentOwnerErasureGuard ownerErasureGuard;
     private final DocumentRetentionProperties properties;
     private final DocumentActivityService activityService;
 
     @Transactional
     public GeneratedDocumentResponse archive(String ownerId, UUID documentId, String actorId) {
+        ownerErasureGuard.requireWritable(ownerId);
         GeneratedDocument document = lockOwnedDocument(ownerId, documentId);
         requireRetained(document);
         if (document.getRetentionState() == DocumentRetentionState.ARCHIVED) {
@@ -92,6 +94,7 @@ public class DocumentRetentionService {
 
     @Transactional
     public GeneratedDocumentResponse restore(String ownerId, UUID documentId, String actorId) {
+        ownerErasureGuard.requireWritable(ownerId);
         GeneratedDocument document = lockOwnedDocument(ownerId, documentId);
         requireRetained(document);
         if (document.getRetentionState() == DocumentRetentionState.AVAILABLE) {
@@ -131,6 +134,7 @@ public class DocumentRetentionService {
 
     @Transactional
     public void softDelete(String ownerId, UUID documentId, String actorId) {
+        ownerErasureGuard.requireWritable(ownerId);
         softDeleteInternal(ownerId, documentId, actorId, null);
     }
 
@@ -139,6 +143,7 @@ public class DocumentRetentionService {
             String ownerId,
             ApplicationWithdrawalCleanupRequest request,
             String actorId) {
+        ownerErasureGuard.requireWritable(ownerId);
         List<UUID> documentIds = request.getDocumentIds().stream()
                 .sorted()
                 .toList();
@@ -239,6 +244,7 @@ public class DocumentRetentionService {
             boolean active,
             String reference,
             String actorId) {
+        ownerErasureGuard.requireWritable(ownerId);
         GeneratedDocument document = lockOwnedDocument(ownerId, documentId);
         requireRetained(document);
         String normalizedReference = reference == null ? "" : reference.trim();
@@ -279,6 +285,7 @@ public class DocumentRetentionService {
 
     @Transactional
     public void purge(String ownerId, UUID documentId, String actorId) {
+        ownerErasureGuard.requireWritable(ownerId);
         try {
             properties.requireApprovedPurgePolicy();
         } catch (IllegalStateException exception) {

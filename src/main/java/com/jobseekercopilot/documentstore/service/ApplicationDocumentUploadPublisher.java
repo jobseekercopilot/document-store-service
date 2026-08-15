@@ -23,10 +23,12 @@ public class ApplicationDocumentUploadPublisher {
     private final GeneratedDocumentRepository documentRepository;
     private final ExportedDocumentFileRepository fileRepository;
     private final DocumentOperationLock operationLock;
+    private final DocumentOwnerErasureGuard ownerErasureGuard;
     private final DocumentActivityService activityService;
 
     @Transactional
     public ApplicationDocumentUpload publish(ApplicationDocumentUpload requested) {
+        ownerErasureGuard.requireWritable(requested.getOwnerId());
         var document = documentRepository
                 .findByIdAndUserId(requested.getDocumentId(), requested.getOwnerId())
                 .orElseThrow(() -> new OperationConflictException(

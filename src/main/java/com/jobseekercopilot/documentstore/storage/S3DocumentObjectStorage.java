@@ -7,14 +7,18 @@ import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteMarkerEntry;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectVersionsRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectVersionsResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.ObjectVersion;
 
 @RequiredArgsConstructor
 public class S3DocumentObjectStorage implements DocumentObjectStorage {
@@ -69,6 +73,136 @@ public class S3DocumentObjectStorage implements DocumentObjectStorage {
             client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
         } catch (SdkException exception) {
             throw new ObjectStorageException("Unable to delete document object", exception);
+        }
+    }
+
+    @Override
+    public int permanentlyDeleteKey(String key) {
+        requireSafeScope(key, false);
+        return permanentlyDelete(key, false);
+    }
+
+    @Override
+    public int permanentlyDeletePrefix(String prefix) {
+        requireSafeScope(prefix, true);
+        return permanentlyDelete(prefix, true);
+    }
+
+    private int permanentlyDelete(String scope, boolean prefixScope) {
+        int deleted = 0;
+        String keyMarker = null;
+        String versionMarker = null;
+        for (int page = 0; page < 10_000; page++) {
+            ListObjectVersionsResponse response = listVersions(
+                    scope, keyMarker, versionMarker);
+            for (ObjectVersion version : response.versions()) {
+                if (matches(version.key(), scope, prefixScope)) {
+                    deleteVersion(version.key(), version.versionId());
+                    deleted++;
+                }
+            }
+            for (DeleteMarkerEntry marker : response.deleteMarkers()) {
+                if (matches(marker.key(), scope, prefixScope)) {
+                    deleteVersion(marker.key(), marker.versionId());
+                    deleted++;
+                }
+            }
+            if (!Boolean.TRUE.equals(response.isTruncated())) {
+                verifyNoVersions(scope, prefixScope);
+                return deleted;
+            }
+            String nextKeyMarker = response.nextKeyMarker();
+            String nextVersionMarker = response.nextVersionIdMarker();
+            if (java.util.Objects.equals(keyMarker, nextKeyMarker)
+                    && java.util.Objects.equals(versionMarker, nextVersionMarker)) {
+                throw new ObjectStorageException(
+                        "Permanent document object deletion did not make progress");
+            }
+            keyMarker = nextKeyMarker;
+            versionMarker = nextVersionMarker;
+        }
+        throw new ObjectStorageException(
+                "Permanent document object deletion exceeded its bounded page limit");
+    }
+
+    private ListObjectVersionsResponse listVersions(
+            String prefix, String keyMarker, String versionMarker) {
+        try {
+            var request = ListObjectVersionsRequest.builder()
+                    .bucket(bucket)
+                    .prefix(prefix)
+                    .keyMarker(keyMarker)
+                    .versionIdMarker(versionMarker)
+                    .maxKeys(1000)
+                    .build();
+            return client.listObjectVersions(request);
+        } catch (SdkException exception) {
+            throw new ObjectStorageException(
+                    "Unable to enumerate permanent document object deletion scope",
+                    exception);
+        }
+    }
+
+    private void deleteVersion(String key, String versionId) {
+        try {
+            var request = DeleteObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(key)
+                    .versionId(versionId)
+                    .build();
+            client.deleteObject(request);
+        } catch (SdkException exception) {
+            throw new ObjectStorageException(
+                    "Unable to permanently delete document object version", exception);
+        }
+    }
+
+    private void verifyNoVersions(String scope, boolean prefixScope) {
+        String keyMarker = null;
+        String versionMarker = null;
+        for (int page = 0; page < 10_000; page++) {
+            ListObjectVersionsResponse response = listVersions(
+                    scope, keyMarker, versionMarker);
+            boolean versionPresent = response.versions().stream()
+                    .map(ObjectVersion::key)
+                    .anyMatch(key -> matches(key, scope, prefixScope));
+            boolean markerPresent = response.deleteMarkers().stream()
+                    .map(DeleteMarkerEntry::key)
+                    .anyMatch(key -> matches(key, scope, prefixScope));
+            if (versionPresent || markerPresent) {
+                throw new ObjectStorageException(
+                        "Unable to prove permanent document object deletion");
+            }
+            if (!Boolean.TRUE.equals(response.isTruncated())) {
+                return;
+            }
+            String nextKeyMarker = response.nextKeyMarker();
+            String nextVersionMarker = response.nextVersionIdMarker();
+            if (java.util.Objects.equals(keyMarker, nextKeyMarker)
+                    && java.util.Objects.equals(versionMarker, nextVersionMarker)) {
+                throw new ObjectStorageException(
+                        "Permanent document object verification did not make progress");
+            }
+            keyMarker = nextKeyMarker;
+            versionMarker = nextVersionMarker;
+        }
+        throw new ObjectStorageException(
+                "Permanent document object verification exceeded its bounded page limit");
+    }
+
+    private boolean matches(String key, String scope, boolean prefixScope) {
+        return prefixScope ? key.startsWith(scope) : key.equals(scope);
+    }
+
+    private void requireSafeScope(String scope, boolean prefixScope) {
+        boolean allowed = scope != null
+                && (prefixScope
+                        ? scope.matches(
+                                "documents/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}/")
+                        : scope.matches(
+                                "quarantine/application-uploads/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"));
+        if (!allowed) {
+            throw new ObjectStorageException("Invalid permanent-erasure object scope");
         }
     }
 

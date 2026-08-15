@@ -30,6 +30,17 @@ and evidence payloads, and retains only an owner-visible `PURGED` tombstone,
 content-free lifecycle audit and exact application/freeze associations. It
 never redirects an application. The service has no bulk purge endpoint.
 
+Coordinated account deletion first uses the recoverable path. Once every
+document has passed that deadline, the separately authorized exact-owner
+workflow in
+[`ACCOUNT_PERMANENT_ERASURE.md`](ACCOUNT_PERMANENT_ERASURE.md) removes live
+owner records and all current/noncurrent object versions. Its completion state
+truthfully distinguishes live-data erasure from bounded managed-backup expiry.
+It retains a keyed pseudonymous operation/write guard, hashed approval and
+backup evidence, and the minimum exact opaque document/upload scopes required
+to re-erase a restored object store. No raw owner, filename, document content,
+approval reference, backup reference or object bytes remain after completion.
+
 Association state alone does not retain bytes forever. While an application is
 inside the supported history window, its exact version identity is protected;
 after an approved purge, that protection is the scrubbed tombstone and frozen
@@ -154,6 +165,12 @@ The guarded recovery process is in
 - Store/Tracker integration proves immutable exact identity, draft/frozen
   association capture and terminal hash/evidence scrubbing.
 - Infrastructure injects and rotates a distinct administrator credential.
+- Infrastructure pins the independent permanent-erasure capability, grants
+  exact-prefix version enumeration/deletion, and retains the fingerprint key
+  through the audit/write-guard lifetime.
+- Infrastructure pins the exact backup-retention maximum and policy version;
+  a retention administrator records hashed expiry evidence only after the
+  snapshotted window ends.
 - PostgreSQL, S3 object versions, backups, logs and exported reports have
   compatible expiry and restore handling.
 - Cross-user archive, restore, delete and purge denial pass in integrated E2E.

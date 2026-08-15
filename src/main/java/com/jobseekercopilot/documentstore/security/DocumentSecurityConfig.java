@@ -79,6 +79,8 @@ public class DocumentSecurityConfig {
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers("/internal/system-data/**")
                         .hasAuthority(DocumentAuthorities.ENVIRONMENT_DATA)
+                        .requestMatchers("/internal/retention/**")
+                        .hasAuthority(DocumentAuthorities.RETENTION_ADMIN)
                         .requestMatchers("/internal/account-lifecycle/**")
                         .hasAuthority(DocumentAuthorities.ACCOUNT_LIFECYCLE)
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")

@@ -9,6 +9,10 @@ public interface DocumentObjectStorage {
 
     void delete(String key);
 
+    int permanentlyDeleteKey(String key);
+
+    int permanentlyDeletePrefix(String prefix);
+
     boolean exists(String key);
 
     ObjectKeyPage listKeys(String prefix, String afterKey, int limit);

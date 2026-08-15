@@ -62,6 +62,7 @@ class DocumentFileReconciliationObservabilityTest {
                 objectStorage,
                 fileValidator,
                 operationLock,
+                mock(DocumentOwnerErasureGuard.class),
                 new DocumentStoreMetrics(registry),
                 storageOperationJournal,
                 mock(DocumentActivityService.class));

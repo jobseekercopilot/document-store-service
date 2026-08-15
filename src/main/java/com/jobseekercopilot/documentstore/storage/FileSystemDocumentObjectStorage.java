@@ -78,6 +78,54 @@ public class FileSystemDocumentObjectStorage implements DocumentObjectStorage {
     }
 
     @Override
+    public int permanentlyDeleteKey(String key) {
+        if (key == null || !key.matches(
+                "quarantine/application-uploads/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}")) {
+            throw new ObjectStorageException("Invalid permanent-erasure object key");
+        }
+        Path target = resolve(key);
+        try {
+            boolean present = Files.deleteIfExists(target);
+            if (Files.exists(target)) {
+                throw new ObjectStorageException(
+                        "Unable to prove permanent document object deletion");
+            }
+            return present ? 1 : 0;
+        } catch (IOException exception) {
+            throw new ObjectStorageException(
+                    "Unable to permanently delete document object", exception);
+        }
+    }
+
+    @Override
+    public int permanentlyDeletePrefix(String prefix) {
+        if (prefix == null || !prefix.matches(
+                "documents/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}/")) {
+            throw new ObjectStorageException("Invalid permanent-erasure object prefix");
+        }
+        try (var paths = Files.walk(root)) {
+            List<Path> matches = paths
+                    .filter(Files::isRegularFile)
+                    .filter(path -> relativeKey(path).startsWith(prefix))
+                    .toList();
+            for (Path match : matches) {
+                Files.deleteIfExists(match);
+            }
+            try (var remaining = Files.walk(root)) {
+                if (remaining.filter(Files::isRegularFile)
+                        .anyMatch(path -> relativeKey(path).startsWith(prefix))) {
+                    throw new ObjectStorageException(
+                            "Unable to prove permanent document prefix deletion");
+                }
+            }
+            return matches.size();
+        } catch (IOException exception) {
+            throw new ObjectStorageException(
+                    "Unable to permanently delete document object prefix", exception);
+        }
+    }
+
+    @Override
     public boolean exists(String key) {
         return Files.isRegularFile(resolve(key));
     }
@@ -119,6 +167,12 @@ public class FileSystemDocumentObjectStorage implements DocumentObjectStorage {
             throw new ObjectStorageException("Invalid document object key");
         }
         return resolved;
+    }
+
+    private String relativeKey(Path path) {
+        return root.relativize(path)
+                .toString()
+                .replace(path.getFileSystem().getSeparator(), "/");
     }
 
     private void deleteQuietly(Path path) {

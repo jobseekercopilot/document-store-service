@@ -22,6 +22,10 @@ public interface DocumentStorageOperationRepository
 
     void deleteByOwnerId(String ownerId);
 
+    List<DocumentStorageOperation> findByOwnerId(String ownerId);
+
+    boolean existsByOwnerIdAndState(String ownerId, StorageOperationState state);
+
     boolean existsByStorageKeyAndState(String storageKey, StorageOperationState state);
 
     boolean existsByGeneratedDocumentIdAndState(

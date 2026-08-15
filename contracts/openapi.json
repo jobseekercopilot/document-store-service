@@ -9,7 +9,7 @@
     "license" : {
       "name" : "Proprietary and confidential"
     },
-    "version" : "4.1.0"
+    "version" : "4.2.0"
   },
   "servers" : [ {
     "url" : "http://localhost:8089",
@@ -23,6 +23,231 @@
     "description" : "Endpoints for storing and downloading exported DOCX and PDF files"
   } ],
   "paths" : {
+    "/internal/retention/v1/permanent-erasures/{operationId}" : {
+      "get" : {
+        "tags" : [ "document-permanent-erasure-controller" ],
+        "summary" : "Read exact owner permanent-erasure status",
+        "description" : "Owner-bound status; no raw owner, document, object or approval identifiers are returned",
+        "operationId" : "status",
+        "parameters" : [ {
+          "name" : "operationId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "serviceToken" : [ ]
+        } ]
+      },
+      "put" : {
+        "tags" : [ "document-permanent-erasure-controller" ],
+        "summary" : "Start or resume exact owner permanent erasure",
+        "description" : "Retention-administrator-only, owner-bound, replay-safe erasure of the exact supplied document set",
+        "operationId" : "erase",
+        "parameters" : [ {
+          "name" : "operationId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/PermanentErasureRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "403" : {
+            "description" : "Retention administrator authority is required",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Policy, recovery, legal hold or exact-scope guard blocked erasure",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          },
+          "202" : {
+            "description" : "Live erasure completed or reconciliation remains pending",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          },
+          "503" : {
+            "description" : "Object erasure could not be proven and remains retryable",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          },
+          "200" : {
+            "description" : "Backup retention completed",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "Malformed or duplicate exact scope",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
+    "/internal/retention/v1/permanent-erasures/{operationId}/backup-expiry-attestation" : {
+      "put" : {
+        "tags" : [ "document-permanent-erasure-controller" ],
+        "summary" : "Attest expiry of managed backup recovery copies",
+        "description" : "Retention-administrator evidence gate; rejected before the snapshotted backup window ends",
+        "operationId" : "attestBackupExpiry",
+        "parameters" : [ {
+          "name" : "operationId",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "name" : "X-Document-Owner",
+          "in" : "header",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/BackupExpiryAttestationRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "404" : {
+            "description" : "Owner-scoped operation was not found",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          },
+          "403" : {
+            "description" : "Retention administrator authority is required",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          },
+          "200" : {
+            "description" : "Backup expiry evidence recorded and permanent erasure completed",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Window, policy or live-erasure prerequisite not satisfied",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          },
+          "503" : {
+            "description" : "Final object-version verification failed and remains retryable",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
     "/internal/system-data/seed/documents" : {
       "post" : {
         "tags" : [ "document-store-system-data-controller" ],
@@ -203,22 +428,22 @@
               }
             }
           },
-          "409" : {
-            "description" : "Idempotency conflict",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/DocumentFileResponse"
-                }
-              }
-            }
-          },
           "413" : {
             "description" : "Upload exceeds a configured safety limit",
             "content" : {
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Idempotency conflict",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DocumentFileResponse"
                 }
               }
             }
@@ -394,22 +619,22 @@
               }
             }
           },
-          "413" : {
-            "description" : "Decoded file or archive exceeds a configured safety limit",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "409" : {
             "description" : "Idempotency conflict",
             "content" : {
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/DocumentFileResponse"
+                }
+              }
+            }
+          },
+          "413" : {
+            "description" : "Decoded file or archive exceeds a configured safety limit",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -489,16 +714,6 @@
           }
         },
         "responses" : {
-          "413" : {
-            "description" : "File or request envelope is too large",
-            "content" : {
-              "application/json" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "200" : {
             "description" : "Upload operation completed or replayed",
             "content" : {
@@ -509,8 +724,8 @@
               }
             }
           },
-          "400" : {
-            "description" : "Malformed upload context",
+          "409" : {
+            "description" : "Idempotency or rate conflict",
             "content" : {
               "application/json" : {
                 "schema" : {
@@ -519,8 +734,18 @@
               }
             }
           },
-          "409" : {
-            "description" : "Idempotency or rate conflict",
+          "413" : {
+            "description" : "File or request envelope is too large",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "Malformed upload context",
             "content" : {
               "application/json" : {
                 "schema" : {
@@ -1034,6 +1259,29 @@
         } ]
       }
     },
+    "/internal/retention/v1/permanent-erasures/readiness" : {
+      "get" : {
+        "tags" : [ "document-permanent-erasure-controller" ],
+        "summary" : "Read permanent-erasure release readiness",
+        "description" : "Returns aggregate fail-closed capability and reconciliation state without owner identities",
+        "operationId" : "readiness",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PermanentErasureReadinessResponse"
+                }
+              }
+            }
+          }
+        },
+        "security" : [ {
+          "serviceToken" : [ ]
+        } ]
+      }
+    },
     "/api/v1/documents/{id}" : {
       "get" : {
         "tags" : [ "Generated Documents" ],
@@ -1333,16 +1581,6 @@
           }
         } ],
         "responses" : {
-          "503" : {
-            "description" : "Stored artifact failed integrity or safety validation",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "200" : {
             "description" : "Exact retained artifact bytes",
             "headers" : {
@@ -1400,6 +1638,16 @@
                     "type" : "string",
                     "format" : "byte"
                   }
+                }
+              }
+            }
+          },
+          "503" : {
+            "description" : "Stored artifact failed integrity or safety validation",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1742,6 +1990,16 @@
           }
         } ],
         "responses" : {
+          "503" : {
+            "description" : "Stored file failed integrity or safety validation",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404" : {
             "description" : "Exported file not found",
             "content" : {
@@ -1752,16 +2010,6 @@
                     "type" : "string",
                     "format" : "byte"
                   }
-                }
-              }
-            }
-          },
-          "503" : {
-            "description" : "Stored file failed integrity or safety validation",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1993,6 +2241,103 @@
   },
   "components" : {
     "schemas" : {
+      "PermanentErasureRequest" : {
+        "required" : [ "approvalReference", "documentIds" ],
+        "type" : "object",
+        "properties" : {
+          "documentIds" : {
+            "maxItems" : 2000,
+            "minItems" : 0,
+            "type" : "array",
+            "items" : {
+              "type" : "string",
+              "format" : "uuid"
+            }
+          },
+          "approvalReference" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "PermanentErasureResponse" : {
+        "required" : [ "attemptCount", "backupCopiesMayRemain", "backupExpiryEvidenceRecorded", "backupRetentionDays", "backupRetentionPolicyVersion", "backupRetentionUntil", "backupRetentionWindowElapsed", "completedAt", "documentCount", "liveDataErased", "liveDataErasedAt", "objectScopeCount", "operationId", "policyVersion", "schemaVersion", "status" ],
+        "type" : "object",
+        "properties" : {
+          "schemaVersion" : {
+            "type" : "string"
+          },
+          "operationId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "status" : {
+            "type" : "string",
+            "enum" : [ "OBJECT_ERASURE_PENDING", "BACKUP_RETENTION_PENDING", "COMPLETED" ]
+          },
+          "documentCount" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "objectScopeCount" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "attemptCount" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "liveDataErased" : {
+            "type" : "boolean"
+          },
+          "backupRetentionWindowElapsed" : {
+            "type" : "boolean"
+          },
+          "backupExpiryEvidenceRecorded" : {
+            "type" : "boolean"
+          },
+          "backupCopiesMayRemain" : {
+            "type" : "boolean"
+          },
+          "liveDataErasedAt" : {
+            "type" : "string",
+            "format" : "date-time",
+            "nullable" : true
+          },
+          "backupRetentionUntil" : {
+            "type" : "string",
+            "format" : "date-time",
+            "nullable" : true
+          },
+          "completedAt" : {
+            "type" : "string",
+            "format" : "date-time",
+            "nullable" : true
+          },
+          "policyVersion" : {
+            "type" : "string"
+          },
+          "backupRetentionPolicyVersion" : {
+            "type" : "string"
+          },
+          "backupRetentionDays" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
+      },
+      "BackupExpiryAttestationRequest" : {
+        "required" : [ "evidenceReference" ],
+        "type" : "object",
+        "properties" : {
+          "evidenceReference" : {
+            "maxLength" : 256,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
       "DocumentEvidenceProvenance" : {
         "required" : [ "claimLedger", "evidenceRevisions", "evidenceSnapshotDigest", "evidenceSnapshotId", "generatedAt", "profileContentDigest", "profileRevisionId", "sectionOrder" ],
         "type" : "object",
@@ -3034,6 +3379,52 @@
           }
         },
         "description" : "Replay-stable result of an explicit family current-pointer command"
+      },
+      "PermanentErasureReadinessResponse" : {
+        "required" : [ "backupExpiryEvidenceRequired", "backupRetentionPending", "backupRetentionPolicyVersion", "enabled", "liveErasureReconciliationPending", "maximumBackupRetentionDays", "policyVersion", "ready", "recoveryDays", "schemaVersion", "status" ],
+        "type" : "object",
+        "properties" : {
+          "schemaVersion" : {
+            "type" : "string"
+          },
+          "enabled" : {
+            "type" : "boolean"
+          },
+          "ready" : {
+            "type" : "boolean"
+          },
+          "status" : {
+            "type" : "string",
+            "enum" : [ "DISABLED", "MISCONFIGURED", "READY", "RECONCILIATION_REQUIRED" ]
+          },
+          "policyVersion" : {
+            "type" : "string",
+            "nullable" : true
+          },
+          "backupRetentionPolicyVersion" : {
+            "type" : "string",
+            "nullable" : true
+          },
+          "recoveryDays" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "maximumBackupRetentionDays" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "backupExpiryEvidenceRequired" : {
+            "type" : "boolean"
+          },
+          "liveErasureReconciliationPending" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "backupRetentionPending" : {
+            "type" : "integer",
+            "format" : "int64"
+          }
+        }
       },
       "DocumentReferenceResponse" : {
         "type" : "object",

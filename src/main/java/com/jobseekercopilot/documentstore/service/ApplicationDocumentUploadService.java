@@ -14,7 +14,6 @@ import com.jobseekercopilot.documentstore.exception.ResourceNotFoundException;
 import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
 import com.jobseekercopilot.documentstore.repository.ApplicationDocumentUploadRepository;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
-import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
 import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
 import com.jobseekercopilot.documentstore.storage.ObjectStorageException;
@@ -43,7 +42,6 @@ public class ApplicationDocumentUploadService {
     private final GeneratedDocumentService documentService;
     private final DocumentFileService fileService;
     private final DocumentFileValidator fileValidator;
-    private final DocumentObjectStorage objectStorage;
     private final MalwareScanner malwareScanner;
     private final DocumentTextExtractor textExtractor;
     private final DocumentStoreMetrics metrics;
@@ -138,17 +136,8 @@ public class ApplicationDocumentUploadService {
             byte[] content) {
         try {
             persistence.requireQuota(upload);
-            String quarantineKey = upload.getQuarantineKey();
-            if (quarantineKey == null) {
-                quarantineKey = ObjectKeyFactory.forUploadQuarantine(upload.getId());
-                objectStorage.put(
-                        quarantineKey,
-                        content,
-                        "application/octet-stream",
-                        upload.getOriginalSha256());
-                upload.setQuarantineKey(quarantineKey);
-            }
-            transition(upload, ApplicationDocumentUploadState.QUARANTINED);
+            upload = persistence.storeQuarantine(
+                    upload.getOwnerId(), upload.getId(), content);
 
             fileValidator.validateApplicationUpload(
                     upload.getFileType(),
@@ -175,15 +164,18 @@ public class ApplicationDocumentUploadService {
                     upload.getFileType(), content);
             upload.setExtractedTextSha256(extracted.sha256());
             upload.setExtractionState(extracted.state());
-            repository.saveAndFlush(upload);
+            upload = persistence.saveGuarded(
+                    upload, ApplicationDocumentUploadState.EXTRACTING);
+            ApplicationDocumentUpload extractedUpload = upload;
 
             UUID familyId = documentRepository
                     .findFirstByApplicationIdAndDocumentTypeAndUserIdOrderByVersionDesc(
-                            upload.getApplicationId(),
-                            upload.getDocumentType(),
-                            upload.getOwnerId())
+                            extractedUpload.getApplicationId(),
+                            extractedUpload.getDocumentType(),
+                            extractedUpload.getOwnerId())
                     .map(document -> {
-                        if (!document.getJobId().equals(upload.getJobId())) {
+                        if (!document.getJobId().equals(
+                                extractedUpload.getJobId())) {
                             throw new OperationConflictException(
                                     "Application document context does not match the canonical job.");
                         }
@@ -191,11 +183,11 @@ public class ApplicationDocumentUploadService {
                     })
                     .orElseGet(() -> UUID.nameUUIDFromBytes(
                             ("application-upload-family:"
-                                    + upload.getOwnerId()
+                                    + extractedUpload.getOwnerId()
                                     + ":"
-                                    + upload.getApplicationId()
+                                    + extractedUpload.getApplicationId()
                                     + ":"
-                                    + upload.getDocumentType().name())
+                                    + extractedUpload.getDocumentType().name())
                                     .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
             GeneratedDocumentResponse document = documentService.createDocument(
                     upload.getOwnerId(),
@@ -214,7 +206,8 @@ public class ApplicationDocumentUploadService {
                             .build(),
                     derivedKey(upload, "document"));
             upload.setDocumentId(document.getId());
-            repository.saveAndFlush(upload);
+            upload = persistence.saveGuarded(
+                    upload, ApplicationDocumentUploadState.EXTRACTING);
 
             DocumentFileResponse artifact = fileService.storeApplicationUploadArtifact(
                     upload.getOwnerId(),
@@ -225,7 +218,8 @@ public class ApplicationDocumentUploadService {
                     content,
                     derivedKey(upload, "artifact"));
             upload.setArtifactId(artifact.getId());
-            repository.saveAndFlush(upload);
+            upload = persistence.saveGuarded(
+                    upload, ApplicationDocumentUploadState.EXTRACTING);
 
             ApplicationDocumentUpload readyUpload = publisher.publish(upload);
             cleanupQuarantine(readyUpload);
@@ -272,8 +266,9 @@ public class ApplicationDocumentUploadService {
     private void transition(
             ApplicationDocumentUpload upload,
             ApplicationDocumentUploadState state) {
+        ApplicationDocumentUploadState expected = upload.getState();
         upload.setState(state);
-        repository.saveAndFlush(upload);
+        persistence.saveGuarded(upload, expected);
     }
 
     private void reject(
@@ -288,10 +283,11 @@ public class ApplicationDocumentUploadService {
             ApplicationDocumentUploadState state,
             String code,
             String message) {
+        ApplicationDocumentUploadState expected = upload.getState();
         upload.setState(state);
         upload.setFailureCode(code);
         upload.setFailureMessage(message);
-        repository.saveAndFlush(upload);
+        persistence.saveGuarded(upload, expected);
     }
 
     private void cleanupQuarantine(ApplicationDocumentUpload upload) {
@@ -299,9 +295,12 @@ public class ApplicationDocumentUploadService {
             return;
         }
         try {
-            objectStorage.delete(upload.getQuarantineKey());
-            upload.setQuarantineKey(null);
-            repository.saveAndFlush(upload);
+            persistence.cleanupQuarantine(
+                    upload.getOwnerId(),
+                    upload.getId(),
+                    upload.getState(),
+                    null,
+                    false);
         } catch (RuntimeException ignored) {
             metrics.recordReconciliation(
                     "upload", "failure", "delete_pending");

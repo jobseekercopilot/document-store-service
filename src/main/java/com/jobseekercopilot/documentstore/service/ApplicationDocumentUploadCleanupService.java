@@ -4,7 +4,6 @@ import com.jobseekercopilot.documentstore.config.DocumentUploadProperties;
 import com.jobseekercopilot.documentstore.entity.ApplicationDocumentUploadState;
 import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
 import com.jobseekercopilot.documentstore.repository.ApplicationDocumentUploadRepository;
-import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import java.time.LocalDateTime;
 import java.util.EnumSet;
 import lombok.RequiredArgsConstructor;
@@ -16,30 +15,29 @@ import org.springframework.stereotype.Service;
 public class ApplicationDocumentUploadCleanupService {
 
     private final ApplicationDocumentUploadRepository repository;
-    private final DocumentObjectStorage objectStorage;
+    private final ApplicationDocumentUploadPersistence persistence;
     private final DocumentUploadProperties properties;
     private final DocumentStoreMetrics metrics;
 
     public int cleanup() {
+        LocalDateTime cutoff = LocalDateTime.now().minusSeconds(
+                properties.getCleanupMinimumAgeSeconds());
         var uploads = repository
                 .findByStateInAndUpdatedAtBeforeAndQuarantineKeyIsNotNullOrderByUpdatedAtAsc(
                         EnumSet.allOf(ApplicationDocumentUploadState.class),
-                        LocalDateTime.now().minusSeconds(
-                                properties.getCleanupMinimumAgeSeconds()),
+                        cutoff,
                         PageRequest.of(0, properties.getCleanupBatchSize()));
         int cleaned = 0;
         for (var upload : uploads) {
             try {
-                if (!upload.getState().terminal()) {
-                    upload.setState(ApplicationDocumentUploadState.FAILED);
-                    upload.setFailureCode("PROCESSING_TIMEOUT");
-                    upload.setFailureMessage(
-                            "Document processing did not complete within its safe recovery window.");
+                if (persistence.cleanupQuarantine(
+                        upload.getOwnerId(),
+                        upload.getId(),
+                        upload.getState(),
+                        cutoff,
+                        true)) {
+                    cleaned++;
                 }
-                objectStorage.delete(upload.getQuarantineKey());
-                upload.setQuarantineKey(null);
-                repository.saveAndFlush(upload);
-                cleaned++;
             } catch (RuntimeException exception) {
                 metrics.recordReconciliation(
                         "upload", "failure", "delete_pending");

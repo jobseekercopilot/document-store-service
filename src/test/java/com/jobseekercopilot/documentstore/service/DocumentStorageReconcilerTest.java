@@ -36,10 +36,12 @@ class DocumentStorageReconcilerTest {
         var storage = mock(DocumentObjectStorage.class);
         var validator = mock(DocumentFileValidator.class);
         var lock = mock(DocumentOperationLock.class);
+        var erasureGuard = mock(DocumentOwnerErasureGuard.class);
         var properties = properties();
         String storageKey = "documents/private/files/file/v1";
         ExportedDocumentFile file = ExportedDocumentFile.builder()
                 .id(UUID.randomUUID())
+                .ownerId("reconciliation-owner")
                 .storageKey(storageKey)
                 .fileType(FileType.PDF)
                 .storageStatus(ObjectStorageStatus.AVAILABLE)
@@ -68,6 +70,7 @@ class DocumentStorageReconcilerTest {
                 storage,
                 validator,
                 lock,
+                erasureGuard,
                 properties,
                 new DocumentStoreMetrics(registry));
 

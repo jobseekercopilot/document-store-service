@@ -88,6 +88,7 @@ public class ProductionStorageVerifier implements ApplicationRunner, FlywayMigra
             throw new IllegalStateException(
                     "Document storage reconciliation must be enabled");
         }
+        verifyPermanentErasureConfiguration();
         if (!environment.getProperty("spring.flyway.clean-disabled", Boolean.class, false)) {
             throw new IllegalStateException("Flyway clean must remain disabled");
         }
@@ -100,6 +101,89 @@ public class ProductionStorageVerifier implements ApplicationRunner, FlywayMigra
         }
         if (environment.getProperty("spring.jpa.show-sql", Boolean.class, false)) {
             throw new IllegalStateException("SQL logging is forbidden outside isolated tests");
+        }
+    }
+
+    private void verifyPermanentErasureConfiguration() {
+        boolean purgeEnabled = environment.getProperty(
+                "document-store.retention.purge-enabled", Boolean.class, false);
+        boolean permanentErasureEnabled = environment.getProperty(
+                "document-store.retention.permanent-erasure-enabled",
+                Boolean.class,
+                false);
+        boolean writeFenceEnabled = environment.getProperty(
+                "document-store.retention.permanent-erasure-write-fence-enabled",
+                Boolean.class,
+                false);
+        if (purgeEnabled && !permanentErasureEnabled) {
+            throw new IllegalStateException(
+                    "Production document purge requires the reviewed permanent-erasure capability");
+        }
+        if (!permanentErasureEnabled) {
+            if (writeFenceEnabled) {
+                verifyPermanentErasureWriteFence();
+            }
+            return;
+        }
+        if (!writeFenceEnabled) {
+            throw new IllegalStateException(
+                    "Permanent erasure requires the permanent write fence");
+        }
+        if (!purgeEnabled) {
+            throw new IllegalStateException(
+                    "Permanent erasure requires document purge to be explicitly enabled");
+        }
+        requireTrue(
+                "document-store.retention.versioned-object-erasure-enabled",
+                "Permanent erasure requires reviewed versioned-object deletion");
+        String policyVersion = required("document-store.retention.policy-version");
+        if ("UNAPPROVED".equalsIgnoreCase(policyVersion.trim())) {
+            throw new IllegalStateException(
+                    "Permanent erasure requires an approved retention policy version");
+        }
+        String backupPolicyVersion = required(
+                "document-store.retention.backup-retention-policy-version");
+        if ("UNAPPROVED".equalsIgnoreCase(backupPolicyVersion.trim())) {
+            throw new IllegalStateException(
+                    "Permanent erasure requires an approved backup-retention policy version");
+        }
+        if (!"task-role".equalsIgnoreCase(required(
+                "document-store.object-storage.s3.credentials-provider"))) {
+            throw new IllegalStateException(
+                    "Permanent erasure requires task-role S3 credentials");
+        }
+        verifyPermanentErasureWriteFence();
+        String retentionAdminToken = required(
+                "document-store.security.service-identity.retention-admin-token");
+        requireStrongSecret(retentionAdminToken, "retention administrator token");
+        String fingerprintKey = required(
+                "document-store.retention.erasure-fingerprint-key");
+        if (retentionAdminToken.equals(fingerprintKey)) {
+            throw new IllegalStateException(
+                    "Permanent-erasure fingerprint and administrator credentials must be distinct");
+        }
+        int backupDays = environment.getProperty(
+                "document-store.retention.maximum-backup-retention-days",
+                Integer.class,
+                0);
+        if (backupDays < 1 || backupDays > 35) {
+            throw new IllegalStateException(
+                    "Permanent-erasure maximum backup retention must be explicitly bounded to 1-35 days");
+        }
+    }
+
+    private void verifyPermanentErasureWriteFence() {
+        String fingerprintKey = required(
+                "document-store.retention.erasure-fingerprint-key");
+        requireStrongSecret(fingerprintKey, "erasure fingerprint key");
+    }
+
+    private void requireStrongSecret(String value, String name) {
+        if (value.length() < 32
+                || value.length() > 512
+                || value.chars().anyMatch(character -> Character.isISOControl(character))) {
+            throw new IllegalStateException(
+                    "Permanent-erasure " + name + " must be 32-512 non-control characters");
         }
     }
 

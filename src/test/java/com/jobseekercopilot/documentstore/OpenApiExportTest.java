@@ -57,7 +57,69 @@ class OpenApiExportTest {
                 .getContentAsString();
         var generated = objectMapper.readTree(specification);
 
-        assertEquals("4.1.0", generated.at("/info/version").asText());
+        assertEquals("4.2.0", generated.at("/info/version").asText());
+        var permanentErasure = generated.at(
+                "/paths/~1internal~1retention~1v1~1permanent-erasures~1{operationId}/put");
+        assertTrue(permanentErasure.isObject());
+        assertTrue(permanentErasure.at("/security/0/serviceToken").isArray());
+        assertTrue(generated.at(
+                "/paths/~1internal~1retention~1v1~1permanent-erasures~1readiness/get")
+                .isObject());
+        var backupAttestation = generated.at(
+                "/paths/~1internal~1retention~1v1~1permanent-erasures~1{operationId}~1backup-expiry-attestation/put");
+        assertTrue(backupAttestation.isObject());
+        assertTrue(backupAttestation.at("/security/0/serviceToken").isArray());
+        assertTrue(generated.at(
+                        "/components/schemas/BackupExpiryAttestationRequest/required")
+                .toString()
+                .contains("\"evidenceReference\""));
+        var erasureRequest = generated.at(
+                "/components/schemas/PermanentErasureRequest");
+        assertTrue(erasureRequest.path("required").toString()
+                .contains("\"documentIds\""));
+        assertTrue(erasureRequest.path("required").toString()
+                .contains("\"approvalReference\""));
+        var erasureResponse = generated.at(
+                "/components/schemas/PermanentErasureResponse/properties");
+        for (String property : new String[] {
+                "operationId",
+                "status",
+                "liveDataErased",
+                "backupRetentionWindowElapsed",
+                "backupExpiryEvidenceRecorded",
+                "backupCopiesMayRemain",
+                "backupRetentionUntil",
+                "completedAt",
+                "policyVersion",
+                "backupRetentionPolicyVersion",
+                "backupRetentionDays"
+        }) {
+            assertTrue(erasureResponse.has(property));
+        }
+        assertFalse(erasureResponse.has("ownerId"));
+        assertFalse(erasureResponse.has("documentIds"));
+        assertFalse(erasureResponse.has("approvalReference"));
+        assertFalse(erasureResponse.has("evidenceReference"));
+        assertEquals(
+                erasureResponse.size(),
+                generated.at("/components/schemas/PermanentErasureResponse/required")
+                        .size());
+        var readinessSchema = generated.at(
+                "/components/schemas/PermanentErasureReadinessResponse");
+        assertEquals(
+                readinessSchema.path("properties").size(),
+                readinessSchema.path("required").size());
+        for (String status : new String[] {
+                "DISABLED",
+                "MISCONFIGURED",
+                "READY",
+                "RECONCILIATION_REQUIRED"
+        }) {
+            assertTrue(readinessSchema
+                    .at("/properties/status/enum")
+                    .toString()
+                    .contains("\"" + status + "\""));
+        }
         var upload = generated.at(
                 "/paths/~1api~1v1~1applications~1{applicationId}~1documents~1{documentType}~1uploads/post");
         assertTrue(upload.isObject());

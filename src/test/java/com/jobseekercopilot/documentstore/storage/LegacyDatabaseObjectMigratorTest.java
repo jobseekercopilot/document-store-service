@@ -1,7 +1,13 @@
 package com.jobseekercopilot.documentstore.storage;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 
+import com.jobseekercopilot.documentstore.service.DocumentOwnerErasureGuard;
+import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -24,6 +30,7 @@ class LegacyDatabaseObjectMigratorTest {
         jdbc.execute("""
                 CREATE TABLE exported_document_files (
                     id UUID PRIMARY KEY,
+                    owner_id VARCHAR(255) NOT NULL,
                     generated_document_id UUID NOT NULL,
                     version INTEGER NOT NULL,
                     mime_type VARCHAR(255) NOT NULL,
@@ -41,13 +48,15 @@ class LegacyDatabaseObjectMigratorTest {
         byte[] content = "legacy-bytes".getBytes(StandardCharsets.UTF_8);
         jdbc.update("""
                 INSERT INTO exported_document_files (
-                    id, generated_document_id, version, mime_type, file_content,
+                    id, owner_id, generated_document_id, version, mime_type, file_content,
                     storage_status, created_at
-                ) VALUES (?, ?, 1, 'application/pdf', ?, 'LEGACY_DATABASE', ?)
-                """, fileId, documentId, content, LocalDateTime.now());
+                ) VALUES (?, ?, ?, 1, 'application/pdf', ?, 'LEGACY_DATABASE', ?)
+                """, fileId, "legacy-owner", documentId, content, LocalDateTime.now());
         var storage = new FileSystemDocumentObjectStorage(objectRoot);
+        var migrationService = new LegacyDatabaseObjectMigrationService(
+                jdbc, storage, mock(DocumentOwnerErasureGuard.class));
 
-        new LegacyDatabaseObjectMigrator(jdbc, storage)
+        new LegacyDatabaseObjectMigrator(migrationService)
                 .run(new DefaultApplicationArguments(new String[0]));
 
         String key = ObjectKeyFactory.forFile(documentId, fileId, 1);
@@ -64,5 +73,36 @@ class LegacyDatabaseObjectMigratorTest {
                 "SELECT content_sha256 FROM exported_document_files WHERE id = ?",
                 String.class,
                 fileId)).isEqualTo(ObjectIntegrity.sha256(content));
+
+        UUID blockedDocumentId = UUID.randomUUID();
+        UUID blockedFileId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO exported_document_files (
+                    id, owner_id, generated_document_id, version, mime_type,
+                    file_content, storage_status, created_at
+                ) VALUES (?, ?, ?, 1, 'application/pdf', ?, 'LEGACY_DATABASE', ?)
+                """,
+                blockedFileId,
+                "erased-owner",
+                blockedDocumentId,
+                content,
+                LocalDateTime.now());
+        DocumentOwnerErasureGuard rejectingGuard =
+                mock(DocumentOwnerErasureGuard.class);
+        doThrow(new OperationConflictException("revoked"))
+                .when(rejectingGuard)
+                .requireWritable(anyString());
+
+        var blockedMigration = new LegacyDatabaseObjectMigrationService(
+                jdbc, storage, rejectingGuard);
+        assertThatThrownBy(blockedMigration::migrateNext)
+                .isInstanceOf(OperationConflictException.class);
+        assertThat(storage.exists(ObjectKeyFactory.forFile(
+                        blockedDocumentId, blockedFileId, 1)))
+                .isFalse();
+        assertThat(jdbc.queryForObject(
+                "SELECT storage_status FROM exported_document_files WHERE id = ?",
+                String.class,
+                blockedFileId)).isEqualTo("LEGACY_DATABASE");
     }
 }

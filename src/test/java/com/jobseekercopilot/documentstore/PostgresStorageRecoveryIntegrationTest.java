@@ -66,8 +66,9 @@ class PostgresStorageRecoveryIntegrationTest {
         // The bytes remain recoverable as LEGACY_DATABASE until the startup
         // migrator has durably copied and verified the external object.
         Flyway flyway = flyway(POSTGRES.getJdbcUrl());
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(11);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(12);
         flyway.validate();
+        UUID erasureOperationId = UUID.randomUUID();
         try (Connection connection = primaryConnection()) {
             assertThatThrownBy(() -> markLegacyAvailableWithoutObject(connection, fileId))
                     .isInstanceOf(SQLException.class)
@@ -75,6 +76,10 @@ class PostgresStorageRecoveryIntegrationTest {
                     .isEqualTo("23514");
             assertSecureUploadMigrationPreservedLegacyDocument(
                     connection, documentId);
+            insertPendingErasureEvidence(
+                    connection, erasureOperationId, documentId);
+            assertPendingErasureEvidence(
+                    connection, erasureOperationId, documentId);
         }
 
         // Discard all application-side migration and JDBC state, then repeat the
@@ -104,6 +109,8 @@ class PostgresStorageRecoveryIntegrationTest {
         flyway(restoredJdbcUrl()).validate();
         try (Connection restoredConnection = restoredConnection()) {
             assertStoredDocument(restoredConnection, documentId, fileId);
+            assertPendingErasureEvidence(
+                    restoredConnection, erasureOperationId, documentId);
             deleteSyntheticDocument(restoredConnection, documentId);
             assertThat(count(
                             restoredConnection,
@@ -116,6 +123,70 @@ class PostgresStorageRecoveryIntegrationTest {
                             documentId))
                     .isZero();
         }
+    }
+
+    private void insertPendingErasureEvidence(
+            Connection connection,
+            UUID operationId,
+            UUID documentId) throws SQLException {
+        LocalDateTime now = LocalDateTime.now();
+        try (PreparedStatement operation = connection.prepareStatement("""
+                INSERT INTO document_owner_erasure_operations (
+                    operation_id, owner_id, owner_fingerprint, request_sha256,
+                    fingerprint_key_verifier, approval_reference_sha256,
+                    operator_id, state, document_count,
+                    object_scope_count, attempt_count, policy_version,
+                    backup_retention_policy_version, backup_retention_days,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """);
+                PreparedStatement scope = connection.prepareStatement("""
+                INSERT INTO document_owner_erasure_scopes (
+                    id, operation_id, scope_type, document_id, storage_scope
+                ) VALUES (?, ?, ?, ?, ?)
+                """)) {
+            operation.setObject(1, operationId);
+            operation.setString(2, "synthetic-owner");
+            operation.setString(3, "a".repeat(64));
+            operation.setString(4, "b".repeat(64));
+            operation.setString(5, "d".repeat(64));
+            operation.setString(6, "c".repeat(64));
+            operation.setString(7, "document_retention_admin");
+            operation.setString(8, "OBJECT_ERASURE_PENDING");
+            operation.setInt(9, 1);
+            operation.setInt(10, 1);
+            operation.setInt(11, 0);
+            operation.setString(12, "synthetic-policy-v1");
+            operation.setString(13, "synthetic-backup-policy-v1");
+            operation.setInt(14, 35);
+            operation.setObject(15, now);
+            operation.setObject(16, now);
+            assertThat(operation.executeUpdate()).isEqualTo(1);
+
+            scope.setObject(1, UUID.randomUUID());
+            scope.setObject(2, operationId);
+            scope.setString(3, "DOCUMENT_PREFIX");
+            scope.setObject(4, documentId);
+            scope.setString(5, "documents/" + documentId + "/");
+            assertThat(scope.executeUpdate()).isEqualTo(1);
+        }
+    }
+
+    private void assertPendingErasureEvidence(
+            Connection connection,
+            UUID operationId,
+            UUID documentId) throws SQLException {
+        assertThat(count(
+                        connection,
+                        "SELECT COUNT(*) FROM document_owner_erasure_operations WHERE operation_id = ? AND state = 'OBJECT_ERASURE_PENDING'",
+                        operationId))
+                .isEqualTo(1);
+        assertThat(count(
+                        connection,
+                        "SELECT COUNT(*) FROM document_owner_erasure_scopes WHERE operation_id = ? AND document_id = '"
+                                + documentId + "'",
+                        operationId))
+                .isEqualTo(1);
     }
 
     private Flyway flyway(String jdbcUrl) {

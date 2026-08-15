@@ -30,7 +30,8 @@ public interface ApplicationDocumentUploadRepository
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update ApplicationDocumentUpload upload "
-            + "set upload.processingStartedAt = :startedAt, upload.updatedAt = :startedAt "
+            + "set upload.processingStartedAt = :startedAt, upload.updatedAt = :startedAt, "
+            + "upload.version = upload.version + 1 "
             + "where upload.id = :id and upload.ownerId = :ownerId "
             + "and upload.processingStartedAt is null and upload.state in :states")
     int claimProcessing(

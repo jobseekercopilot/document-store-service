@@ -102,6 +102,7 @@ document-store:
     provider: ${DOCUMENT_STORE_OBJECT_PROVIDER:s3}
     filesystem-root: ${DOCUMENT_STORE_FILESYSTEM_ROOT:}
     s3:
+      credentials-provider: ${DOCUMENT_STORE_OBJECT_CREDENTIALS_PROVIDER:static}
       endpoint: ${DOCUMENT_STORE_OBJECT_ENDPOINT:}
       region: ${DOCUMENT_STORE_OBJECT_REGION:}
       bucket: ${DOCUMENT_STORE_OBJECT_BUCKET:}

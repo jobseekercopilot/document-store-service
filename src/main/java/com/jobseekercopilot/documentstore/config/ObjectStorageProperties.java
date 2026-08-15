@@ -20,6 +20,7 @@ public class ObjectStorageProperties {
 
     @Data
     public static class S3 {
+        private CredentialsProvider credentialsProvider = CredentialsProvider.STATIC;
         private String endpoint;
         private String region;
         private String bucket;
@@ -27,5 +28,10 @@ public class ObjectStorageProperties {
         private String secretKey;
         private String kmsKeyId;
         private boolean pathStyleAccess;
+    }
+
+    public enum CredentialsProvider {
+        STATIC,
+        TASK_ROLE
     }
 }

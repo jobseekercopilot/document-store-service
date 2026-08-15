@@ -133,6 +133,58 @@ class ProductionStorageVerifierTest {
     }
 
     @Test
+    void acceptsTaskRoleCredentialsWithoutStaticSecrets() {
+        MockEnvironment environment = validEnvironment()
+                .withProperty(
+                        "document-store.object-storage.s3.credentials-provider", "task-role")
+                .withProperty("document-store.object-storage.s3.access-key", "")
+                .withProperty("document-store.object-storage.s3.secret-key", "");
+
+        assertThatCode(() -> verifier(environment).run(NO_ARGUMENTS))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void rejectsStaticSecretsOrCustomEndpointInTaskRoleMode() {
+        assertThatThrownBy(() -> verifier(validEnvironment()
+                                .withProperty(
+                                        "document-store.object-storage.s3.credentials-provider",
+                                        "task-role"))
+                        .run(NO_ARGUMENTS))
+                .hasMessageContaining("Static S3 credentials are forbidden");
+
+        assertThatThrownBy(() -> verifier(validEnvironment()
+                                .withProperty(
+                                        "document-store.object-storage.s3.credentials-provider",
+                                        "task-role")
+                                .withProperty(
+                                        "document-store.object-storage.s3.access-key", "")
+                                .withProperty(
+                                        "document-store.object-storage.s3.secret-key", "")
+                                .withProperty(
+                                        "document-store.object-storage.s3.endpoint",
+                                        "https://objects.example"))
+                        .run(NO_ARGUMENTS))
+                .hasMessageContaining("custom S3 endpoint is forbidden");
+    }
+
+    @Test
+    void rejectsUnknownOrIncompleteS3CredentialProvider() {
+        assertThatThrownBy(() -> verifier(validEnvironment()
+                                .withProperty(
+                                        "document-store.object-storage.s3.credentials-provider",
+                                        "ambient"))
+                        .run(NO_ARGUMENTS))
+                .hasMessageContaining("task-role or static");
+
+        assertThatThrownBy(() -> verifier(validEnvironment()
+                                .withProperty(
+                                        "document-store.object-storage.s3.secret-key", ""))
+                        .run(NO_ARGUMENTS))
+                .hasMessageContaining("object-storage.s3.secret-key");
+    }
+
+    @Test
     void isolatedTestConfigurationCanExplicitlyDisableProductionCheck() {
         MockEnvironment environment = new MockEnvironment()
                 .withProperty("document-store.database.production-safety-check", "false");
@@ -167,6 +219,8 @@ class ProductionStorageVerifierTest {
                 .withProperty("document-store.object-storage.provider", "s3")
                 .withProperty("document-store.object-storage.s3.region", "eu-west-2")
                 .withProperty("document-store.object-storage.s3.bucket", "document-objects")
+                .withProperty(
+                        "document-store.object-storage.s3.credentials-provider", "static")
                 .withProperty("document-store.object-storage.s3.access-key", "managed-access")
                 .withProperty("document-store.object-storage.s3.secret-key", "managed-secret")
                 .withProperty(

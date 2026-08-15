@@ -7,7 +7,10 @@ import java.net.URI;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.util.StringUtils;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.ContainerCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
@@ -27,8 +30,7 @@ public class ObjectStorageConfiguration {
         var builder = S3Client.builder()
                 .httpClientBuilder(UrlConnectionHttpClient.builder())
                 .region(Region.of(s3.getRegion()))
-                .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create(s3.getAccessKey(), s3.getSecretKey())))
+                .credentialsProvider(documentStoreCredentialsProvider(properties))
                 .serviceConfiguration(S3Configuration.builder()
                         .pathStyleAccessEnabled(s3.isPathStyleAccess())
                         .build());
@@ -36,6 +38,33 @@ public class ObjectStorageConfiguration {
             builder.endpointOverride(URI.create(s3.getEndpoint()));
         }
         return builder.build();
+    }
+
+    AwsCredentialsProvider documentStoreCredentialsProvider(ObjectStorageProperties properties) {
+        ObjectStorageProperties.S3 s3 = properties.getS3();
+        boolean hasAccessKey = StringUtils.hasText(s3.getAccessKey());
+        boolean hasSecretKey = StringUtils.hasText(s3.getSecretKey());
+        return switch (s3.getCredentialsProvider()) {
+            case TASK_ROLE -> {
+                if (hasAccessKey || hasSecretKey) {
+                    throw new IllegalStateException(
+                            "Static S3 credentials are forbidden when task-role credentials are selected");
+                }
+                if (StringUtils.hasText(s3.getEndpoint())) {
+                    throw new IllegalStateException(
+                            "A custom S3 endpoint is forbidden when task-role credentials are selected");
+                }
+                yield ContainerCredentialsProvider.builder().build();
+            }
+            case STATIC -> {
+                if (!hasAccessKey || !hasSecretKey) {
+                    throw new IllegalStateException(
+                            "Both static S3 credentials are required when the static provider is selected");
+                }
+                yield StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(s3.getAccessKey(), s3.getSecretKey()));
+            }
+        };
     }
 
     @Bean

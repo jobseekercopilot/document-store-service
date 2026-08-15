@@ -19,8 +19,8 @@ Startup fails unless all of the following are true:
 - the H2 console and SQL logging are disabled;
 - managed encryption at rest and encrypted backups are declared; and
 - non-secret managed key references are supplied for the database and backups;
-- the object provider is `s3`, its region and private bucket are named, and
-  credentials are injected; and
+- the object provider is `s3`, its region and private bucket are named, and its
+  credential provider is explicitly `task-role` or `static`; and
 - a managed object KMS key is named and any custom endpoint uses HTTPS.
 
 The two key-reference settings are identifiers and must never contain key
@@ -49,9 +49,10 @@ The object-store principal must be dedicated to this service and restricted to
 the configured bucket. It needs get/put/delete/head for `documents/*` and
 bucket-level listing restricted by an S3 prefix condition to `documents/`. It
 must not grant public ACL or bucket-policy mutation. The intended AWS
-production binding is an ECS/Fargate task role rather than a long-lived access
-key; that Infrastructure migration remains tracked by INFRA-08. Rotate any
-transitional credentials and the KMS key reference through the approved
+production binding is the explicit ECS task-role provider, which rejects both
+static keys and custom endpoints. Infrastructure proof of the role attachment
+remains tracked by INFRA-08. Rotate static credentials used by an approved
+compatible development store and the KMS key reference through the approved
 secret/infrastructure workflow. The object key contains opaque UUIDs, not
 usernames, filenames or document text.
 

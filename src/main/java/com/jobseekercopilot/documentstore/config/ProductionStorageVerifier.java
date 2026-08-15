@@ -69,8 +69,7 @@ public class ProductionStorageVerifier implements ApplicationRunner, FlywayMigra
         }
         required("document-store.object-storage.s3.region");
         required("document-store.object-storage.s3.bucket");
-        required("document-store.object-storage.s3.access-key");
-        required("document-store.object-storage.s3.secret-key");
+        verifyObjectStoreCredentials();
         required("document-store.object-storage.s3.kms-key-id");
         String objectEndpoint = environment.getProperty(
                 "document-store.object-storage.s3.endpoint", "");
@@ -102,6 +101,34 @@ public class ProductionStorageVerifier implements ApplicationRunner, FlywayMigra
         if (environment.getProperty("spring.jpa.show-sql", Boolean.class, false)) {
             throw new IllegalStateException("SQL logging is forbidden outside isolated tests");
         }
+    }
+
+    private void verifyObjectStoreCredentials() {
+        String provider = required("document-store.object-storage.s3.credentials-provider");
+        String accessKey = environment.getProperty(
+                "document-store.object-storage.s3.access-key", "");
+        String secretKey = environment.getProperty(
+                "document-store.object-storage.s3.secret-key", "");
+        if ("task-role".equalsIgnoreCase(provider)) {
+            if (!accessKey.isBlank() || !secretKey.isBlank()) {
+                throw new IllegalStateException(
+                        "Static S3 credentials are forbidden when task-role credentials are selected");
+            }
+            if (!environment.getProperty(
+                            "document-store.object-storage.s3.endpoint", "")
+                    .isBlank()) {
+                throw new IllegalStateException(
+                        "A custom S3 endpoint is forbidden when task-role credentials are selected");
+            }
+            return;
+        }
+        if ("static".equalsIgnoreCase(provider)) {
+            required("document-store.object-storage.s3.access-key");
+            required("document-store.object-storage.s3.secret-key");
+            return;
+        }
+        throw new IllegalStateException(
+                "Document Store S3 credentials provider must be task-role or static");
     }
 
     private void requireTrue(String property, String message) {

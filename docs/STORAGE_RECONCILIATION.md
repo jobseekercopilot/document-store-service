@@ -89,10 +89,11 @@ documents, file metadata, objects, unknown orphans or cursors. See
 
 ## AWS deployment requirements
 
-The intended AWS deployment should grant the service an ECS/Fargate task role
-through the AWS SDK default credential chain. Removing the current transitional
-static access-key settings and proving the task-role binding remain tracked by
-Infrastructure issue INFRA-08.
+The AWS deployment must select the explicit `task-role` credential provider.
+That provider reads only the ECS container credential endpoint and rejects
+static keys or a custom object-store endpoint. The alternative `static` mode is
+retained for isolated S3-compatible development stores and requires both keys.
+Infrastructure must still prove the deployed task-role binding (INFRA-08).
 
 The role needs only:
 

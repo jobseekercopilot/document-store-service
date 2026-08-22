@@ -72,6 +72,7 @@ class DocumentFileServiceFailureTest {
                 storage,
                 validator,
                 locks,
+                mock(DocumentOwnerErasureGuard.class),
                 new DocumentStoreMetrics(new SimpleMeterRegistry()),
                 journal,
                 mock(DocumentActivityService.class));

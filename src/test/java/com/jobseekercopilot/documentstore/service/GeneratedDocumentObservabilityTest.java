@@ -42,6 +42,7 @@ class GeneratedDocumentObservabilityTest {
                 repository,
                 retentionService,
                 operationLock,
+                mock(DocumentOwnerErasureGuard.class),
                 new DocumentStoreMetrics(registry),
                 mock(DocumentActivityService.class),
                 new DocumentUploadProperties());

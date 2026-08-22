@@ -39,6 +39,7 @@ public class GeneratedDocumentService {
     private final GeneratedDocumentRepository repository;
     private final DocumentRetentionService retentionService;
     private final DocumentOperationLock operationLock;
+    private final DocumentOwnerErasureGuard ownerErasureGuard;
     private final DocumentStoreMetrics metrics;
     private final DocumentActivityService activityService;
     private final DocumentUploadProperties uploadProperties;
@@ -48,6 +49,7 @@ public class GeneratedDocumentService {
             String ownerId,
             CreateDocumentRequest request,
             String requestedOperationKey) {
+        ownerErasureGuard.requireWritable(ownerId);
         return metrics.observe(
                 "document",
                 "create",
@@ -239,6 +241,7 @@ public class GeneratedDocumentService {
 
     @Transactional
     public void deleteDocument(String ownerId, UUID id, String actorId) {
+        ownerErasureGuard.requireWritable(ownerId);
         metrics.observe("document", "delete", null, null, () -> {
             retentionService.softDelete(ownerId, id, actorId);
         });
@@ -250,6 +253,7 @@ public class GeneratedDocumentService {
             String applicationId,
             DocumentType documentType,
             UUID documentId) {
+        ownerErasureGuard.requireWritable(ownerId);
         return metrics.observe(
                 "document",
                 "activate",
@@ -276,6 +280,7 @@ public class GeneratedDocumentService {
 
     @Transactional
     public GeneratedDocumentResponse approveDocumentVersion(String ownerId, UUID documentId) {
+        ownerErasureGuard.requireWritable(ownerId);
         return metrics.observe(
                 "document",
                 "activate",
@@ -313,6 +318,7 @@ public class GeneratedDocumentService {
     @Transactional
     public GeneratedDocumentResponse selectCurrentDocumentVersion(
             String ownerId, UUID documentId) {
+        ownerErasureGuard.requireWritable(ownerId);
         return metrics.observe(
                 "document",
                 "activate",
@@ -330,6 +336,7 @@ public class GeneratedDocumentService {
 
     @Transactional
     public void deactivateApplicationDocuments(String ownerId, String applicationId) {
+        ownerErasureGuard.requireWritable(ownerId);
         metrics.observe("document", "deactivate", null, null, () -> {
             deactivateApplicationDocumentsInternal(ownerId, applicationId);
         });

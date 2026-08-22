@@ -193,6 +193,138 @@ class ProductionStorageVerifierTest {
                 .doesNotThrowAnyException();
     }
 
+    @Test
+    void productionPurgeFailsClosedWithoutThePermanentErasureCapability() {
+        assertThatThrownBy(() -> verifier(validEnvironment()
+                        .withProperty("document-store.retention.purge-enabled", "true"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("permanent-erasure capability");
+    }
+
+    @Test
+    void permanentErasureRequiresVersionDeletionTaskRolePolicyAndDistinctSecrets() {
+        assertThatCode(() -> verifier(permanentErasureEnvironment()).run(NO_ARGUMENTS))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.retention.permanent-erasure-write-fence-enabled",
+                                "false"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("permanent write fence");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.retention.versioned-object-erasure-enabled",
+                                "false"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("versioned-object deletion");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.object-storage.s3.credentials-provider",
+                                "static")
+                        .withProperty(
+                                "document-store.object-storage.s3.access-key",
+                                "managed-access")
+                        .withProperty(
+                                "document-store.object-storage.s3.secret-key",
+                                "managed-secret"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("task-role S3 credentials");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.retention.policy-version",
+                                "UNAPPROVED"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("approved retention policy");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.retention.backup-retention-policy-version",
+                                "UNAPPROVED"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("approved backup-retention policy");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.retention.erasure-fingerprint-key",
+                                "retention-administrator-token-000001"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("must be distinct");
+    }
+
+    @Test
+    void permanentErasureRejectsUnboundedBackupRetention() {
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.retention.maximum-backup-retention-days",
+                                "36"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("1-35 days");
+    }
+
+    @Test
+    void permanentErasureJournalAndFingerprintRotationFailClosed() {
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.permanent-erasure-journal.provider",
+                                "disabled"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("immutable S3 recovery journal");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.permanent-erasure-journal.object-lock-enabled",
+                                "false"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("Object Lock");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.permanent-erasure-journal.s3.bucket",
+                                "document-objects"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("isolated bucket");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.permanent-erasure-journal.s3.kms-key-id",
+                                "kms://document-store/objects"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("isolated KMS key");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.permanent-erasure-journal.s3.kms-key-id",
+                                "alias/document-erasure-journal"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("exact regional KMS key ARN");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.permanent-erasure-journal.retention-policy-version",
+                                "reviewed journal policy"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("1-128 character");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.retention.erasure-fingerprint-previous-keys",
+                                "previous-fingerprint-secret-key-000001,"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("base64url-safe");
+        assertThatThrownBy(() -> verifier(permanentErasureEnvironment()
+                        .withProperty(
+                                "document-store.retention.erasure-fingerprint-previous-keys",
+                                "owner-fingerprint-secret-key-000001"))
+                .run(NO_ARGUMENTS))
+                .hasMessageContaining("must be distinct");
+    }
+
+    @Test
+    void darkenedInitiationStillRequiresTheJournalNeededForRestoreReplay() {
+        MockEnvironment environment = permanentErasureEnvironment()
+                .withProperty(
+                        "document-store.retention.purge-enabled", "false")
+                .withProperty(
+                        "document-store.retention.permanent-erasure-enabled", "false")
+                .withProperty(
+                        "document-store.permanent-erasure-journal.provider", "disabled");
+
+        assertThatThrownBy(() -> verifier(environment).run(NO_ARGUMENTS))
+                .hasMessageContaining("immutable S3 recovery journal");
+    }
+
     private MockEnvironment validEnvironment() {
         return new MockEnvironment()
                 .withProperty(
@@ -226,6 +358,61 @@ class ProductionStorageVerifierTest {
                 .withProperty(
                         "document-store.object-storage.s3.kms-key-id",
                         "kms://document-store/objects");
+    }
+
+    private MockEnvironment permanentErasureEnvironment() {
+        return validEnvironment()
+                .withProperty(
+                        "document-store.object-storage.s3.credentials-provider",
+                        "task-role")
+                .withProperty("document-store.object-storage.s3.access-key", "")
+                .withProperty("document-store.object-storage.s3.secret-key", "")
+                .withProperty("document-store.retention.purge-enabled", "true")
+                .withProperty(
+                        "document-store.retention.permanent-erasure-enabled",
+                        "true")
+                .withProperty(
+                        "document-store.retention.permanent-erasure-write-fence-enabled",
+                        "true")
+                .withProperty(
+                        "document-store.retention.versioned-object-erasure-enabled",
+                        "true")
+                .withProperty(
+                        "document-store.retention.policy-version",
+                        "reviewed-retention-2026-08")
+                .withProperty(
+                        "document-store.retention.backup-retention-policy-version",
+                        "reviewed-backups-35d-v1")
+                .withProperty(
+                        "document-store.retention.maximum-backup-retention-days",
+                        "35")
+                .withProperty(
+                        "document-store.security.service-identity.retention-admin-token",
+                        "retention-administrator-token-000001")
+                .withProperty(
+                        "document-store.retention.erasure-fingerprint-key",
+                        "owner-fingerprint-secret-key-000001")
+                .withProperty(
+                        "document-store.permanent-erasure-journal.provider",
+                        "s3")
+                .withProperty(
+                        "document-store.permanent-erasure-journal.object-lock-enabled",
+                        "true")
+                .withProperty(
+                        "document-store.permanent-erasure-journal.retention-policy-version",
+                        "reviewed-erasure-journal-v1")
+                .withProperty(
+                        "document-store.permanent-erasure-journal.s3.credentials-provider",
+                        "task-role")
+                .withProperty(
+                        "document-store.permanent-erasure-journal.s3.region",
+                        "eu-west-2")
+                .withProperty(
+                        "document-store.permanent-erasure-journal.s3.bucket",
+                        "document-erasure-journal")
+                .withProperty(
+                        "document-store.permanent-erasure-journal.s3.kms-key-id",
+                        "arn:aws:kms:eu-west-2:123456789012:key/12345678-1234-1234-1234-123456789abc");
     }
 
     private ProductionStorageVerifier verifier(MockEnvironment environment) {

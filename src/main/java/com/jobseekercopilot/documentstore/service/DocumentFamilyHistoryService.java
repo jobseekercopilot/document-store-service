@@ -50,6 +50,7 @@ public class DocumentFamilyHistoryService {
     private final DocumentTombstoneAssociationRepository
             tombstoneAssociationRepository;
     private final DocumentOperationLock operationLock;
+    private final DocumentOwnerErasureGuard ownerErasureGuard;
     private final DocumentStoreMetrics metrics;
     private final DocumentActivityService activityService;
 
@@ -120,6 +121,7 @@ public class DocumentFamilyHistoryService {
             UUID documentFamilyId,
             SelectFamilyCurrentRequest request,
             String requestedIdempotencyKey) {
+        ownerErasureGuard.requireWritable(ownerId);
         return metrics.observe("document", "activate", null, null, () ->
                 selectCurrentInternal(
                         ownerId,

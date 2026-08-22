@@ -5,6 +5,7 @@ import com.jobseekercopilot.documentstore.entity.DocumentStorageReconciliationCu
 import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
 import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
 import com.jobseekercopilot.documentstore.entity.StorageOperationState;
+import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
 import com.jobseekercopilot.documentstore.repository.DocumentStorageOperationRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentStorageReconciliationCursorRepository;
@@ -37,6 +38,7 @@ public class DocumentStorageReconciler {
     private final DocumentObjectStorage objectStorage;
     private final DocumentFileValidator fileValidator;
     private final DocumentOperationLock operationLock;
+    private final DocumentOwnerErasureGuard ownerErasureGuard;
     private final DocumentStorageReconciliationProperties properties;
     private final DocumentStoreMetrics metrics;
 
@@ -88,6 +90,10 @@ public class DocumentStorageReconciler {
                                 cursor.getAfterKey(),
                                 page);
         for (var file : files) {
+            if (!acquireWritableOwner(file.getOwnerId())) {
+                report.deletePendingFailed++;
+                continue;
+            }
             try {
                 objectStorage.delete(file.getStorageKey());
                 fileRepository.delete(file);
@@ -114,21 +120,29 @@ public class DocumentStorageReconciler {
                                 cutoff,
                                 cursor.getAfterKey(),
                                 page);
+        java.util.ArrayList<com.jobseekercopilot.documentstore.entity.DocumentStorageOperation>
+                changed = new java.util.ArrayList<>();
         for (var operation : operations) {
+            if (!acquireWritableOwner(operation.getOwnerId())) {
+                report.preparedFailed++;
+                continue;
+            }
             if (fileRepository.existsByStorageKey(operation.getStorageKey())) {
                 operation.setState(StorageOperationState.COMMITTED);
                 report.preparedCommitted++;
+                changed.add(operation);
                 continue;
             }
             try {
                 objectStorage.delete(operation.getStorageKey());
                 operation.setState(StorageOperationState.ROLLED_BACK);
                 report.preparedRolledBack++;
+                changed.add(operation);
             } catch (ObjectStorageException exception) {
                 report.preparedFailed++;
             }
         }
-        operationRepository.saveAll(operations);
+        operationRepository.saveAll(changed);
         operationRepository.flush();
         advance(cursor, operations.stream()
                 .map(operation -> operation.getStorageKey())
@@ -150,6 +164,10 @@ public class DocumentStorageReconciler {
                                 cursor.getAfterKey(),
                                 page);
         for (var file : files) {
+            if (!acquireWritableOwner(file.getOwnerId())) {
+                report.metadataInspectionFailed++;
+                continue;
+            }
             report.availableInspected++;
             final boolean exists;
             try {
@@ -224,6 +242,15 @@ public class DocumentStorageReconciler {
         file.setActive(false);
         file.setStorageStatus(ObjectStorageStatus.UNAVAILABLE);
         fileRepository.save(file);
+    }
+
+    private boolean acquireWritableOwner(String ownerId) {
+        try {
+            ownerErasureGuard.requireWritable(ownerId);
+            return true;
+        } catch (OperationConflictException revoked) {
+            return false;
+        }
     }
 
     private void recordMetrics(DocumentStorageReconciliationReport report) {

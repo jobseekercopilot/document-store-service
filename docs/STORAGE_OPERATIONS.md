@@ -23,6 +23,12 @@ Startup fails unless all of the following are true:
   credential provider is explicitly `task-role` or `static`; and
 - a managed object KMS key is named and any custom endpoint uses HTTPS.
 
+Permanent account-document erasure additionally requires exact-prefix
+`ListBucketVersions`/`DeleteObjectVersion` task-role permissions and the
+fail-closed capability described in
+[`ACCOUNT_PERMANENT_ERASURE.md`](ACCOUNT_PERMANENT_ERASURE.md). A normal
+`DeleteObject` marker is not evidence that noncurrent versions were erased.
+
 The two key-reference settings are identifiers and must never contain key
 material. They make absent platform ownership fail closed; the repository
 cannot attest that a cloud control plane actually applied the named keys.

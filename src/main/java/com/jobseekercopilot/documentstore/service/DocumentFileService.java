@@ -43,6 +43,7 @@ public class DocumentFileService {
     private final DocumentObjectStorage objectStorage;
     private final DocumentFileValidator fileValidator;
     private final DocumentOperationLock operationLock;
+    private final DocumentOwnerErasureGuard ownerErasureGuard;
     private final DocumentStoreMetrics metrics;
     private final DocumentStorageOperationJournal storageOperationJournal;
     private final DocumentActivityService activityService;
@@ -52,6 +53,7 @@ public class DocumentFileService {
             String ownerId,
             CreateDocumentFileRequest request,
             String requestedOperationKey) {
+        ownerErasureGuard.requireWritable(ownerId);
         return metrics.observe(
                 "file",
                 "store_export",
@@ -95,6 +97,7 @@ public class DocumentFileService {
             FileType fileType,
             FileSource source,
             String requestedOperationKey) {
+        ownerErasureGuard.requireWritable(ownerId);
         return metrics.observe(
                 "file",
                 "replace_export",
@@ -158,6 +161,7 @@ public class DocumentFileService {
             String declaredMimeType,
             byte[] content,
             String requestedOperationKey) {
+        ownerErasureGuard.requireWritable(ownerId);
         return metrics.observe(
                 "file",
                 "store_upload",
@@ -192,7 +196,9 @@ public class DocumentFileService {
                 () -> mapToResponse(findActiveDocumentFile(ownerId, id)));
     }
 
+    @Transactional(noRollbackFor = ObjectStorageException.class)
     public DocumentFileDownload downloadDocumentFile(String ownerId, UUID id) {
+        ownerErasureGuard.requireWritable(ownerId);
         return metrics.observe(
                 "file",
                 "retrieve_export",
@@ -201,10 +207,12 @@ public class DocumentFileService {
                 () -> downloadDocumentFileInternal(ownerId, id));
     }
 
+    @Transactional(noRollbackFor = ObjectStorageException.class)
     public DocumentFileDownload downloadDocumentArtifact(
             String ownerId,
             UUID generatedDocumentId,
             UUID artifactId) {
+        ownerErasureGuard.requireWritable(ownerId);
         return metrics.observe(
                 "file",
                 "retrieve_export",
@@ -340,6 +348,7 @@ public class DocumentFileService {
 
     @Transactional
     public DocumentFileResponse activateFileVersion(String ownerId, UUID fileId) {
+        ownerErasureGuard.requireWritable(ownerId);
         return metrics.observe(
                 "file",
                 "activate",

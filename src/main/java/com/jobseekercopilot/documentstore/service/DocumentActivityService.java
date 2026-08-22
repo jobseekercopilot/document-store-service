@@ -23,13 +23,16 @@ public class DocumentActivityService {
 
     private final DocumentActivityEventRepository repository;
     private final DocumentRetentionProperties retentionProperties;
+    private final DocumentOwnerErasureGuard ownerErasureGuard;
 
+    @Transactional
     public void recordOnce(
             String eventKey,
             DocumentActivityType eventType,
             GeneratedDocument document,
             String result,
             LocalDateTime occurredAt) {
+        ownerErasureGuard.requireWritable(document.getUserId());
         if (repository.existsByEventKey(eventKey)) {
             return;
         }
@@ -43,11 +46,13 @@ public class DocumentActivityService {
         }
     }
 
+    @Transactional
     public void record(
             DocumentActivityType eventType,
             GeneratedDocument document,
             String result,
             LocalDateTime occurredAt) {
+        ownerErasureGuard.requireWritable(document.getUserId());
         repository.saveAndFlush(event(
                 eventType.name() + ":" + UUID.randomUUID(),
                 eventType,

@@ -1,0 +1,711 @@
+package com.jobseekercopilot.documentstore.service;
+
+import com.jobseekercopilot.documentstore.config.DocumentFileValidationProperties;
+import com.jobseekercopilot.documentstore.entity.FileType;
+import com.jobseekercopilot.documentstore.exception.DocumentFileTooLargeException;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipException;
+import java.util.zip.ZipInputStream;
+import javax.xml.XMLConstants;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSBase;
+import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSObject;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException;
+import org.apache.pdfbox.pdmodel.interactive.action.PDAction;
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionURI;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+import org.xml.sax.SAXException;
+import org.xml.sax.helpers.DefaultHandler;
+
+@Component
+public class DocumentFileValidator {
+
+    public static final String DOCX_MIME_TYPE =
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    public static final String PDF_MIME_TYPE = "application/pdf";
+
+    private static final String DOCX_MAIN_CONTENT_TYPE =
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+    private static final String CONTENT_TYPES_ENTRY = "[content_types].xml";
+    private static final String DOCUMENT_ENTRY = "word/document.xml";
+    private static final Set<String> EXTERNAL_HYPERLINK_RELATIONSHIP_TYPES = Set.of(
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            "http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink");
+    private static final int MAXIMUM_FILE_NAME_CHARACTERS = 255;
+    private static final int MAXIMUM_ENTRY_NAME_CHARACTERS = 512;
+    private static final int PDF_TRAILER_SEARCH_BYTES = 1024;
+    private static final COSName PDF_IS_MAP = COSName.getPDFName("IsMap");
+    private static final COSName PDF_JAVASCRIPT = COSName.getPDFName("JavaScript");
+    private static final COSName PDF_RICH_MEDIA_CONTENT =
+            COSName.getPDFName("RichMediaContent");
+    private static final COSName PDF_RICH_MEDIA_SETTINGS =
+            COSName.getPDFName("RichMediaSettings");
+    private static final COSName PDF_PREVIOUS_ACTION = COSName.getPDFName("PA");
+    private static final Set<COSName> SAFE_PDF_URI_ACTION_KEYS = Set.of(
+            COSName.TYPE, COSName.S, COSName.URI, PDF_IS_MAP);
+    private static final Set<COSName> FORBIDDEN_PDF_DICTIONARY_KEYS = Set.of(
+            COSName.AA,
+            COSName.ACRO_FORM,
+            COSName.AF,
+            COSName.EF,
+            COSName.EMBEDDED_FILES,
+            COSName.ENCRYPT,
+            COSName.OPEN_ACTION,
+            COSName.XFA,
+            PDF_JAVASCRIPT,
+            PDF_RICH_MEDIA_CONTENT,
+            PDF_RICH_MEDIA_SETTINGS);
+    private static final Set<String> PDF_ACTION_SUBTYPES = Set.of(
+            "GoTo",
+            "GoToR",
+            "GoToE",
+            "Launch",
+            "Thread",
+            "URI",
+            "Sound",
+            "Movie",
+            "Hide",
+            "Named",
+            "SubmitForm",
+            "ResetForm",
+            "ImportData",
+            "JavaScript",
+            "SetOCGState",
+            "Rendition",
+            "Trans",
+            "GoTo3DView",
+            "RichMediaExecute");
+
+    private final DocumentFileValidationProperties properties;
+
+    public DocumentFileValidator(DocumentFileValidationProperties properties) {
+        this.properties = properties;
+    }
+
+    public byte[] decodeAndValidateGenerated(
+            FileType fileType,
+            String fileName,
+            String declaredMimeType,
+            String encodedContent) {
+        validateEncodedLength(encodedContent);
+        byte[] content;
+        try {
+            content = Base64.getDecoder().decode(encodedContent);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("File content must be valid Base64");
+        }
+        validateGenerated(fileType, fileName, declaredMimeType, content);
+        return content;
+    }
+
+    public void validateGenerated(
+            FileType fileType,
+            String fileName,
+            String declaredMimeType,
+            byte[] content) {
+        validate(fileType, fileName, declaredMimeType, content, false, true);
+    }
+
+    public void validateUserUpload(
+            FileType fileType,
+            String fileName,
+            String declaredMimeType,
+            byte[] content) {
+        if (fileType != FileType.DOCX) {
+            throw new IllegalArgumentException(
+                    "Private beta replacement uploads support DOCX only");
+        }
+        validate(fileType, fileName, declaredMimeType, content, true, false);
+    }
+
+    public void validateApplicationUpload(
+            FileType fileType,
+            String fileName,
+            String declaredMimeType,
+            byte[] content) {
+        validate(fileType, fileName, declaredMimeType, content, true, false);
+    }
+
+    public void validateStored(FileType fileType, byte[] content) {
+        validateContent(fileType, content, true);
+    }
+
+    public void validateDeclaredSize(long fileSize) {
+        if (fileSize > properties.getMaximumFileBytes()) {
+            throw tooLarge();
+        }
+    }
+
+    public String canonicalMimeType(FileType fileType) {
+        requireSupportedType(fileType);
+        return switch (fileType) {
+            case DOCX -> DOCX_MIME_TYPE;
+            case PDF -> PDF_MIME_TYPE;
+        };
+    }
+
+    public String safeFileName(UUID fileId, FileType fileType) {
+        if (fileId == null) {
+            throw new IllegalArgumentException("File ID is required");
+        }
+        requireSupportedType(fileType);
+        return "document-" + fileId + "." + fileType.name().toLowerCase(Locale.ROOT);
+    }
+
+    private void validate(
+            FileType fileType,
+            String fileName,
+            String declaredMimeType,
+            byte[] content,
+            boolean userUpload,
+            boolean allowSafeExternalHyperlinks) {
+        requireSupportedType(fileType);
+        validateFileName(fileName, fileType);
+        validateDeclaredMimeType(declaredMimeType, fileType, userUpload);
+        validateContent(fileType, content, allowSafeExternalHyperlinks);
+    }
+
+    private void validateEncodedLength(String encodedContent) {
+        if (encodedContent == null || encodedContent.isBlank()) {
+            throw new IllegalArgumentException("File content is required");
+        }
+        long maximumEncodedCharacters =
+                4L * ((properties.getMaximumFileBytes() + 2L) / 3L);
+        if (encodedContent.length() > maximumEncodedCharacters) {
+            throw tooLarge();
+        }
+    }
+
+    private void validateContent(
+            FileType fileType, byte[] content, boolean allowSafeExternalHyperlinks) {
+        if (content == null || content.length == 0) {
+            throw new IllegalArgumentException("File content is required");
+        }
+        if (content.length > properties.getMaximumFileBytes()) {
+            throw tooLarge();
+        }
+        switch (fileType) {
+            case PDF -> validatePdf(content, allowSafeExternalHyperlinks);
+            case DOCX -> validateDocx(content, allowSafeExternalHyperlinks);
+        }
+    }
+
+    private void validateFileName(String fileName, FileType fileType) {
+        if (fileName == null
+                || fileName.isBlank()
+                || fileName.length() > MAXIMUM_FILE_NAME_CHARACTERS
+                || !fileName.equals(fileName.strip())
+                || !fileName.equals(Normalizer.normalize(fileName, Normalizer.Form.NFKC))) {
+            throw new IllegalArgumentException("Uploaded filename is invalid");
+        }
+        if (fileName.codePoints().anyMatch(this::isUnsafeFileNameCharacter)) {
+            throw new IllegalArgumentException("Uploaded filename is invalid");
+        }
+        String lowerName = fileName.toLowerCase(Locale.ROOT);
+        String expectedExtension = "." + fileType.name().toLowerCase(Locale.ROOT);
+        if (!lowerName.endsWith(expectedExtension)
+                || lowerName.length() == expectedExtension.length()) {
+            throw new IllegalArgumentException(
+                    "Uploaded file extension does not match " + fileType);
+        }
+    }
+
+    private boolean isUnsafeFileNameCharacter(int character) {
+        int type = Character.getType(character);
+        return Character.isISOControl(character)
+                || type == Character.FORMAT
+                || character == '/'
+                || character == '\\'
+                || character == ':';
+    }
+
+    private void validateDeclaredMimeType(
+            String declaredMimeType,
+            FileType fileType,
+            boolean userUpload) {
+        if (declaredMimeType == null || declaredMimeType.isBlank()) {
+            if (userUpload) {
+                return;
+            }
+            throw new IllegalArgumentException("File MIME type is required");
+        }
+        String normalized;
+        try {
+            MediaType parsed = MediaType.parseMediaType(declaredMimeType);
+            normalized = parsed.getType().toLowerCase(Locale.ROOT)
+                    + "/"
+                    + parsed.getSubtype().toLowerCase(Locale.ROOT);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("File MIME type is invalid");
+        }
+        if (MediaType.APPLICATION_OCTET_STREAM_VALUE.equals(normalized)) {
+            if (userUpload) {
+                return;
+            }
+            throw new IllegalArgumentException(
+                    "Uploaded file MIME type does not match " + fileType);
+        }
+        if (!canonicalMimeType(fileType).equals(normalized)) {
+            throw new IllegalArgumentException(
+                    "Uploaded file MIME type does not match " + fileType);
+        }
+    }
+
+    private void validatePdf(byte[] content, boolean allowSafeExternalHyperlinks) {
+        if (content.length < 12
+                || content[0] != '%'
+                || content[1] != 'P'
+                || content[2] != 'D'
+                || content[3] != 'F'
+                || content[4] != '-'
+                || !isSupportedPdfVersion(content)) {
+            throw new IllegalArgumentException("File content does not match PDF");
+        }
+        String searchable = new String(content, StandardCharsets.ISO_8859_1);
+        int trailer = searchable.lastIndexOf("%%EOF");
+        if (trailer < Math.max(0, content.length - PDF_TRAILER_SEARCH_BYTES)
+                || hasNonWhitespaceAfterTrailer(searchable, trailer + 5)) {
+            throw new IllegalArgumentException("PDF file is corrupt or incomplete");
+        }
+
+        try (PDDocument document = Loader.loadPDF(content)) {
+            if (document.isEncrypted() || document.getDocument().isEncrypted()) {
+                throw unsafePdf();
+            }
+            Set<COSDictionary> safeUriActions = Collections.newSetFromMap(
+                    new IdentityHashMap<>());
+            validatePdfAnnotations(
+                    document, allowSafeExternalHyperlinks, safeUriActions);
+            Set<COSBase> inspected = Collections.newSetFromMap(
+                    new IdentityHashMap<>());
+            validatePdfObjectGraph(
+                    document.getDocument().getTrailer(), safeUriActions, inspected);
+        } catch (InvalidPasswordException exception) {
+            throw unsafePdf();
+        } catch (IOException exception) {
+            throw new IllegalArgumentException("PDF file is corrupt or incomplete");
+        }
+    }
+
+    private void validatePdfAnnotations(
+            PDDocument document,
+            boolean allowSafeExternalHyperlinks,
+            Set<COSDictionary> safeUriActions) throws IOException {
+        int linkAnnotations = 0;
+        for (var page : document.getPages()) {
+            for (PDAnnotation annotation : page.getAnnotations()) {
+                if (!allowSafeExternalHyperlinks
+                        || !(annotation instanceof PDAnnotationLink link)) {
+                    throw unsafePdf();
+                }
+                linkAnnotations++;
+                if (linkAnnotations > properties.getMaximumPdfLinkAnnotations()) {
+                    throw new IllegalArgumentException(
+                            "PDF contains too many external link annotations");
+                }
+                validateSafePdfUriLink(link, safeUriActions);
+            }
+        }
+    }
+
+    private void validateSafePdfUriLink(
+            PDAnnotationLink link, Set<COSDictionary> safeUriActions)
+            throws IOException {
+        COSDictionary linkDictionary = link.getCOSObject();
+        if (linkDictionary.containsKey(COSName.AA)
+                || linkDictionary.containsKey(COSName.DEST)
+                || linkDictionary.containsKey(PDF_PREVIOUS_ACTION)) {
+            throw unsafePdf();
+        }
+        PDAction action = link.getAction();
+        if (!(action instanceof PDActionURI uriAction)) {
+            throw unsafePdf();
+        }
+        COSDictionary actionDictionary = uriAction.getCOSObject();
+        if (linkDictionary.getDictionaryObject(COSName.A) != actionDictionary
+                || actionDictionary.keySet().stream()
+                        .anyMatch(key -> !SAFE_PDF_URI_ACTION_KEYS.contains(key))
+                || !"URI".equals(actionDictionary.getNameAsString(COSName.S))
+                || (action.getType() != null && !"Action".equals(action.getType()))
+                || (action.getNext() != null && !action.getNext().isEmpty())
+                || uriAction.shouldTrackMousePosition()
+                || !isSafePdfUriTarget(uriAction.getURI())) {
+            throw unsafePdf();
+        }
+        safeUriActions.add(actionDictionary);
+    }
+
+    private boolean isSafePdfUriTarget(String target) {
+        if (target == null
+                || target.isBlank()
+                || target.length() > properties.getMaximumPdfLinkTargetCharacters()
+                || target.codePoints().anyMatch(this::isUnsafeUriCharacter)
+                || containsPercentEncodedControl(target)) {
+            return false;
+        }
+        try {
+            URI uri = new URI(target);
+            return uri.isAbsolute()
+                    && "https".equalsIgnoreCase(uri.getScheme())
+                    && uri.getHost() != null
+                    && !uri.getHost().isBlank()
+                    && uri.getRawUserInfo() == null;
+        } catch (URISyntaxException exception) {
+            return false;
+        }
+    }
+
+    private boolean isUnsafeUriCharacter(int character) {
+        return Character.isISOControl(character)
+                || Character.getType(character) == Character.FORMAT;
+    }
+
+    private boolean containsPercentEncodedControl(String target) {
+        for (int index = 0; index + 2 < target.length(); index++) {
+            if (target.charAt(index) != '%') {
+                continue;
+            }
+            int high = Character.digit(target.charAt(index + 1), 16);
+            int low = Character.digit(target.charAt(index + 2), 16);
+            if (high >= 0 && low >= 0) {
+                int decoded = high * 16 + low;
+                if (decoded <= 0x1f || decoded == 0x7f) {
+                    return true;
+                }
+                index += 2;
+            }
+        }
+        return false;
+    }
+
+    private void validatePdfObjectGraph(
+            COSBase value,
+            Set<COSDictionary> safeUriActions,
+            Set<COSBase> inspected) {
+        COSBase resolved = dereference(value);
+        if (resolved == null || !inspected.add(resolved)) {
+            return;
+        }
+        if (resolved instanceof COSDictionary dictionary) {
+            validatePdfDictionary(dictionary, safeUriActions);
+            dictionary.getValues().forEach(
+                    child -> validatePdfObjectGraph(child, safeUriActions, inspected));
+        } else if (resolved instanceof COSArray array) {
+            array.forEach(
+                    child -> validatePdfObjectGraph(child, safeUriActions, inspected));
+        }
+    }
+
+    private void validatePdfDictionary(
+            COSDictionary dictionary, Set<COSDictionary> safeUriActions) {
+        if (safeUriActions.contains(dictionary)) {
+            return;
+        }
+        if (FORBIDDEN_PDF_DICTIONARY_KEYS.stream().anyMatch(dictionary::containsKey)) {
+            throw unsafePdf();
+        }
+        String type = dictionary.getNameAsString(COSName.TYPE);
+        String subtype = dictionary.getNameAsString(COSName.SUBTYPE);
+        String actionSubtype = dictionary.getNameAsString(COSName.S);
+        if ("Action".equals(type)
+                || "Filespec".equals(type)
+                || "EmbeddedFile".equals(type)
+                || "EmbeddedFile".equals(subtype)
+                || (actionSubtype != null && PDF_ACTION_SUBTYPES.contains(actionSubtype))
+                || ("Catalog".equals(type) && dictionary.containsKey(COSName.URI))) {
+            throw unsafePdf();
+        }
+    }
+
+    private COSBase dereference(COSBase value) {
+        return value instanceof COSObject object ? object.getObject() : value;
+    }
+
+    private IllegalArgumentException unsafePdf() {
+        return new IllegalArgumentException(
+                "PDF active, encrypted or external content is not supported");
+    }
+
+    private boolean isSupportedPdfVersion(byte[] content) {
+        return content.length > 7
+                && ((content[5] == '1' && content[6] == '.' && content[7] >= '0'
+                                && content[7] <= '7')
+                        || (content[5] == '2' && content[6] == '.' && content[7] == '0'));
+    }
+
+    private boolean hasNonWhitespaceAfterTrailer(String content, int offset) {
+        for (int index = offset; index < content.length(); index++) {
+            if (!Character.isWhitespace(content.charAt(index))
+                    && content.charAt(index) != '\0') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void validateDocx(byte[] content, boolean allowSafeExternalHyperlinks) {
+        if (content.length < 4
+                || content[0] != 'P'
+                || content[1] != 'K'
+                || content[2] != 3
+                || content[3] != 4) {
+            throw new IllegalArgumentException("File content does not match DOCX");
+        }
+
+        Map<String, byte[]> inspectedEntries = new HashMap<>();
+        Set<String> entryNames = new HashSet<>();
+        long expandedBytes = 0;
+        int entryCount = 0;
+        try (ZipInputStream zip =
+                new ZipInputStream(new ByteArrayInputStream(content), StandardCharsets.UTF_8)) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                entryCount++;
+                if (entryCount > properties.getMaximumDocxEntries()) {
+                    throw new DocumentFileTooLargeException(
+                            "DOCX contains too many archive entries");
+                }
+                String normalizedName = validateEntryName(entry.getName());
+                if (!entryNames.add(normalizedName)) {
+                    throw new IllegalArgumentException(
+                            "DOCX contains duplicate archive entries");
+                }
+                rejectActiveDocxEntry(normalizedName);
+                EntryRead entryRead = readEntry(zip, shouldInspect(normalizedName));
+                expandedBytes += entryRead.expandedBytes();
+                if (expandedBytes > properties.getMaximumDocxExpandedBytes()) {
+                    throw new DocumentFileTooLargeException(
+                            "DOCX expanded content exceeds the private beta limit");
+                }
+                if (entryRead.content() != null) {
+                    inspectedEntries.put(normalizedName, entryRead.content());
+                }
+                zip.closeEntry();
+            }
+        } catch (ZipException exception) {
+            throw new IllegalArgumentException("DOCX archive is corrupt");
+        } catch (IOException exception) {
+            throw new IllegalArgumentException("Unable to inspect DOCX archive");
+        }
+
+        if (entryCount == 0) {
+            throw new IllegalArgumentException("DOCX archive is corrupt");
+        }
+        if (expandedBytes
+                > (long) content.length * properties.getMaximumDocxExpansionRatio()) {
+            throw new DocumentFileTooLargeException(
+                    "DOCX compression ratio exceeds the private beta limit");
+        }
+        byte[] contentTypes = inspectedEntries.get(CONTENT_TYPES_ENTRY);
+        byte[] documentXml = inspectedEntries.get(DOCUMENT_ENTRY);
+        if (contentTypes == null || documentXml == null) {
+            throw new IllegalArgumentException("DOCX required document parts are missing");
+        }
+        validateContentTypes(contentTypes);
+        validateDocumentXml(documentXml);
+        inspectedEntries.forEach((name, bytes) -> {
+            if (name.endsWith(".rels")) {
+                validateRelationships(bytes, allowSafeExternalHyperlinks);
+            }
+        });
+    }
+
+    private String validateEntryName(String entryName) {
+        if (entryName == null
+                || entryName.isBlank()
+                || entryName.length() > MAXIMUM_ENTRY_NAME_CHARACTERS
+                || entryName.startsWith("/")
+                || entryName.startsWith("\\")
+                || entryName.indexOf('\\') >= 0
+                || entryName.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("DOCX contains an unsafe archive path");
+        }
+        String[] segments = entryName.split("/", -1);
+        for (int index = 0; index < segments.length; index++) {
+            String segment = segments[index];
+            boolean trailingDirectory = index == segments.length - 1
+                    && segment.isEmpty()
+                    && entryName.endsWith("/");
+            if ((!trailingDirectory && segment.isEmpty())
+                    || ".".equals(segment)
+                    || "..".equals(segment)
+                    || segment.codePoints().anyMatch(Character::isISOControl)) {
+                throw new IllegalArgumentException("DOCX contains an unsafe archive path");
+            }
+        }
+        return entryName.toLowerCase(Locale.ROOT);
+    }
+
+    private void rejectActiveDocxEntry(String entryName) {
+        if (entryName.endsWith("vbaproject.bin")
+                || entryName.startsWith("word/activex/")
+                || entryName.startsWith("word/embeddings/")
+                || entryName.startsWith("customui/")
+                || "encryptioninfo".equals(entryName)
+                || "encryptedpackage".equals(entryName)) {
+            throw new IllegalArgumentException(
+                    "DOCX active, embedded or encrypted content is not supported");
+        }
+    }
+
+    private EntryRead readEntry(ZipInputStream zip, boolean inspect) throws IOException {
+        ByteArrayOutputStream captured = inspect ? new ByteArrayOutputStream() : null;
+        byte[] buffer = new byte[8192];
+        long expandedBytes = 0;
+        int read;
+        while ((read = zip.read(buffer)) != -1) {
+            expandedBytes += read;
+            if (expandedBytes > properties.getMaximumDocxEntryBytes()) {
+                throw new DocumentFileTooLargeException(
+                        "DOCX archive entry exceeds the private beta limit");
+            }
+            if (captured != null) {
+                captured.write(buffer, 0, read);
+            }
+        }
+        return new EntryRead(
+                expandedBytes, captured == null ? null : captured.toByteArray());
+    }
+
+    private boolean shouldInspect(String entryName) {
+        return CONTENT_TYPES_ENTRY.equals(entryName)
+                || DOCUMENT_ENTRY.equals(entryName)
+                || entryName.endsWith(".rels");
+    }
+
+    private void validateContentTypes(byte[] content) {
+        Document document = parseXml(content);
+        NodeList overrides = document.getElementsByTagNameNS("*", "Override");
+        boolean hasMainDocument = false;
+        for (int index = 0; index < overrides.getLength(); index++) {
+            Element element = (Element) overrides.item(index);
+            String partName = element.getAttribute("PartName");
+            String contentType = element.getAttribute("ContentType");
+            if (contentType.toLowerCase(Locale.ROOT).contains("macroenabled")
+                    || contentType.toLowerCase(Locale.ROOT).contains("activex")
+                    || contentType.toLowerCase(Locale.ROOT).contains("oleobject")) {
+                throw new IllegalArgumentException(
+                        "DOCX active content is not supported");
+            }
+            if ("/word/document.xml".equalsIgnoreCase(partName)
+                    && DOCX_MAIN_CONTENT_TYPE.equalsIgnoreCase(contentType)) {
+                hasMainDocument = true;
+            }
+        }
+        if (!hasMainDocument) {
+            throw new IllegalArgumentException("DOCX main document type is invalid");
+        }
+    }
+
+    private void validateDocumentXml(byte[] content) {
+        Document document = parseXml(content);
+        if (document.getElementsByTagNameNS("*", "altChunk").getLength() > 0
+                || document.getElementsByTagNameNS("*", "object").getLength() > 0
+                || document.getElementsByTagNameNS("*", "control").getLength() > 0) {
+            throw new IllegalArgumentException(
+                    "DOCX imported or embedded content is not supported");
+        }
+    }
+
+    private void validateRelationships(
+            byte[] content, boolean allowSafeExternalHyperlinks) {
+        Document document = parseXml(content);
+        NodeList relationships =
+                document.getElementsByTagNameNS("*", "Relationship");
+        for (int index = 0; index < relationships.getLength(); index++) {
+            Element relationship = (Element) relationships.item(index);
+            if ("external".equalsIgnoreCase(
+                    relationship.getAttribute("TargetMode"))) {
+                if (!allowSafeExternalHyperlinks) {
+                    throw new IllegalArgumentException(
+                            "DOCX external relationships are not supported");
+                }
+                if (!isSafeExternalHyperlink(relationship)) {
+                    throw new IllegalArgumentException(
+                            "DOCX supports only credential-free HTTPS hyperlink relationships");
+                }
+            }
+        }
+    }
+
+    private boolean isSafeExternalHyperlink(Element relationship) {
+        if (!EXTERNAL_HYPERLINK_RELATIONSHIP_TYPES.contains(
+                relationship.getAttribute("Type"))) {
+            return false;
+        }
+        try {
+            URI target = new URI(relationship.getAttribute("Target"));
+            return target.isAbsolute()
+                    && "https".equalsIgnoreCase(target.getScheme())
+                    && target.getHost() != null
+                    && !target.getHost().isBlank()
+                    && target.getRawUserInfo() == null;
+        } catch (URISyntaxException exception) {
+            return false;
+        }
+    }
+
+    private Document parseXml(byte[] content) {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(true);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            factory.setFeature(
+                    "http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature(
+                    "http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature(
+                    "http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+            var builder = factory.newDocumentBuilder();
+            builder.setErrorHandler(new DefaultHandler());
+            return builder.parse(new ByteArrayInputStream(content));
+        } catch (ParserConfigurationException | SAXException | IOException exception) {
+            throw new IllegalArgumentException("DOCX XML content is invalid");
+        }
+    }
+
+    private void requireSupportedType(FileType fileType) {
+        if (fileType == null
+                || (fileType != FileType.DOCX && fileType != FileType.PDF)) {
+            throw new IllegalArgumentException("Only DOCX and PDF files are supported");
+        }
+    }
+
+    private DocumentFileTooLargeException tooLarge() {
+        return new DocumentFileTooLargeException(
+                "File exceeds the private beta size limit");
+    }
+
+    private record EntryRead(long expandedBytes, byte[] content) {}
+}

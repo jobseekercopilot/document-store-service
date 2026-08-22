@@ -4,8 +4,9 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -16,6 +17,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
+import com.jobseekercopilot.documentstore.dto.DocumentEvidenceProvenance;
 
 @Entity
 @Table(name = "generated_documents")
@@ -36,15 +38,16 @@ public class GeneratedDocument {
 
     private String applicationId;
 
+    @Column(nullable = false)
+    private UUID documentFamilyId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private DocumentType documentType;
 
-    @Column(nullable = false)
     private String title;
 
-    @Lob
-    @Column(nullable = false, columnDefinition = "TEXT")
+    @Column(columnDefinition = "TEXT")
     private String content;
 
     @Column(nullable = false)
@@ -53,7 +56,89 @@ public class GeneratedDocument {
 
     @Column(nullable = false)
     @Builder.Default
-    private boolean active = true;
+    private boolean active = false;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private DocumentLifecycleState lifecycleState = DocumentLifecycleState.DRAFT;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private DocumentRetentionState retentionState = DocumentRetentionState.AVAILABLE;
+
+    @Column(length = 64)
+    private String contentSha256;
+
+    @Column(length = 64)
+    private String originalContentSha256;
+
+    private Long originalContentSize;
+
+    private UUID originalArtifactId;
+
+    @Enumerated(EnumType.STRING)
+    private FileType originalFileType;
+
+    @Enumerated(EnumType.STRING)
+    private DocumentExtractionState extractionState;
+
+    @Embedded
+    private GenerationProvenance generationProvenance;
+
+    @Convert(converter = DocumentEvidenceProvenanceConverter.class)
+    @Column(name = "evidence_provenance_json", columnDefinition = "TEXT")
+    private DocumentEvidenceProvenance evidenceProvenance;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 48)
+    @Builder.Default
+    private DocumentGroundingState groundingState =
+            DocumentGroundingState.LEGACY_UNSPECIFIED;
+
+    private UUID parentDocumentId;
+
+    private Integer parentDocumentVersion;
+
+    private LocalDateTime approvedAt;
+
+    private String approvedBy;
+
+    private LocalDateTime archivedAt;
+
+    private String archivedBy;
+
+    private LocalDateTime deletedAt;
+
+    private String deletedBy;
+
+    private LocalDateTime purgeEligibleAt;
+
+    private LocalDateTime purgedAt;
+
+    @Column(length = 64)
+    private String unavailableReason;
+
+    @Column(nullable = false)
+    @Builder.Default
+    private boolean legalHold = false;
+
+    @Column(length = 128)
+    private String legalHoldReference;
+
+    private LocalDateTime legalHoldUpdatedAt;
+
+    private String legalHoldUpdatedBy;
+
+    @Column(name = "current_slot")
+    private Short currentSlot;
+
+    @Column(name = "operation_key", length = 128)
+    private String operationKey;
+
+    @Column(name = "request_sha256", length = 64)
+    private String requestSha256;
 
     private String originalFilename;
 
@@ -76,6 +161,9 @@ public class GeneratedDocument {
         if (id == null) {
             id = UUID.randomUUID();
         }
+        if (documentFamilyId == null) {
+            documentFamilyId = id;
+        }
         if (createdAt == null) {
             createdAt = now;
         }
@@ -88,10 +176,36 @@ public class GeneratedDocument {
         if (sourceType == null) {
             sourceType = DocumentSourceType.GENERATED;
         }
+        if (groundingState == null) {
+            groundingState = sourceType == DocumentSourceType.UPLOADED
+                    ? DocumentGroundingState.USER_EDITED_REVIEW_REQUIRED
+                    : DocumentGroundingState.LEGACY_UNSPECIFIED;
+        }
+        if (lifecycleState == null) {
+            lifecycleState = DocumentLifecycleState.DRAFT;
+        }
+        if (retentionState == null) {
+            retentionState = DocumentRetentionState.AVAILABLE;
+        }
+        if (lifecycleState == DocumentLifecycleState.DRAFT) {
+            active = false;
+        }
+        if (retentionState != DocumentRetentionState.AVAILABLE) {
+            active = false;
+        }
+        syncCurrentSlot();
     }
 
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
+        syncCurrentSlot();
+    }
+
+    private void syncCurrentSlot() {
+        if (retentionState != DocumentRetentionState.AVAILABLE) {
+            active = false;
+        }
+        currentSlot = active ? (short) 1 : null;
     }
 }

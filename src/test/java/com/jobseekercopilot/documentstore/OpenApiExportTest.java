@@ -1,11 +1,19 @@
 package com.jobseekercopilot.documentstore;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterAll;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -16,17 +24,287 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class OpenApiExportTest {
 
+    private static final Path CONTRACT = Path.of("contracts/openapi.json");
+    private static final TestJwksServer JWKS = new TestJwksServer();
+
+    @DynamicPropertySource
+    static void jwtProperties(DynamicPropertyRegistry registry) {
+        registry.add("document-store.security.jwk-set-uri", JWKS::jwkSetUri);
+        registry.add("document-store.security.issuer", () -> TestJwksServer.ISSUER);
+        registry.add("document-store.security.audience", () -> TestJwksServer.AUDIENCE);
+    }
+
+    @AfterAll
+    static void stopJwks() {
+        JWKS.close();
+    }
+
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private ObjectMapper objectMapper;
+
     @Test
-    void exportOpenApi() throws Exception {
-        String spec = mockMvc.perform(get("/v3/api-docs"))
+    void publishedContractMatchesTheRunningApplication() throws Exception {
+        String specification = mockMvc.perform(get("/v3/api-docs")
+                        .header(
+                                HttpHeaders.AUTHORIZATION,
+                                "Bearer " + JWKS.validToken("contract-reviewer")))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
+        var generated = objectMapper.readTree(specification);
+
+        assertEquals("4.3.0", generated.at("/info/version").asText());
+        var permanentErasure = generated.at(
+                "/paths/~1internal~1retention~1v1~1permanent-erasures~1{operationId}/put");
+        assertTrue(permanentErasure.isObject());
+        assertTrue(permanentErasure.at("/security/0/serviceToken").isArray());
+        for (String responseCode : new String[] {"400", "403", "409", "503"}) {
+            assertTrue(permanentErasure.path("responses").path(responseCode).toString()
+                    .contains("#/components/schemas/ErrorResponse"));
+        }
+        assertTrue(generated.at(
+                "/paths/~1internal~1retention~1v1~1permanent-erasures~1readiness/get")
+                .isObject());
+        var backupAttestation = generated.at(
+                "/paths/~1internal~1retention~1v1~1permanent-erasures~1{operationId}~1backup-expiry-attestation/put");
+        assertTrue(backupAttestation.isObject());
+        assertTrue(backupAttestation.at("/security/0/serviceToken").isArray());
+        for (String responseCode : new String[] {"400", "403", "404", "409", "503"}) {
+            assertTrue(backupAttestation.path("responses").path(responseCode).toString()
+                    .contains("#/components/schemas/ErrorResponse"));
+        }
+        var restoreReplay = generated.at(
+                "/paths/~1internal~1retention~1v1~1permanent-erasures~1{operationId}~1restore-replays~1{restoreReplayId}/put");
+        assertTrue(restoreReplay.isObject());
+        assertTrue(restoreReplay.at("/security/0/serviceToken").isArray());
+        assertTrue(restoreReplay.path("responses").has("200"));
+        assertTrue(restoreReplay.path("responses").has("202"));
+        for (String responseCode : new String[] {"400", "403", "404", "409", "503"}) {
+            assertTrue(restoreReplay.path("responses").path(responseCode).toString()
+                    .contains("#/components/schemas/ErrorResponse"));
+        }
+        var erasureStatus = generated.at(
+                "/paths/~1internal~1retention~1v1~1permanent-erasures~1{operationId}/get");
+        for (String responseCode : new String[] {"400", "403", "404"}) {
+            assertTrue(erasureStatus.path("responses").path(responseCode).toString()
+                    .contains("#/components/schemas/ErrorResponse"));
+        }
+        assertTrue(generated.at(
+                        "/components/schemas/BackupExpiryAttestationRequest/required")
+                .toString()
+                .contains("\"evidenceReference\""));
+        assertTrue(generated.at(
+                        "/components/schemas/RestoreReplayRequest/required")
+                .toString()
+                .contains("\"evidenceReference\""));
+        assertEquals(
+                1,
+                generated.at(
+                                "/components/schemas/RestoreReplayRequest/properties/evidenceReference/minLength")
+                        .asInt());
+        var erasureRequest = generated.at(
+                "/components/schemas/PermanentErasureRequest");
+        assertTrue(erasureRequest.path("required").toString()
+                .contains("\"documentIds\""));
+        assertTrue(erasureRequest.path("required").toString()
+                .contains("\"approvalReference\""));
+        assertTrue(erasureRequest.at("/properties/documentIds/uniqueItems").asBoolean());
+        assertEquals(0, erasureRequest.at("/properties/documentIds/minItems").asInt());
+        assertEquals(2000, erasureRequest.at("/properties/documentIds/maxItems").asInt());
+        assertEquals(
+                1,
+                erasureRequest.at("/properties/approvalReference/minLength").asInt());
+        assertEquals(
+                1,
+                generated.at(
+                                "/components/schemas/BackupExpiryAttestationRequest/properties/evidenceReference/minLength")
+                        .asInt());
+        var erasureResponse = generated.at(
+                "/components/schemas/PermanentErasureResponse/properties");
+        for (String property : new String[] {
+                "operationId",
+                "status",
+                "recoveryJournalEvidenceRecorded",
+                "liveDataErased",
+                "backupRetentionWindowElapsed",
+                "backupExpiryEvidenceRecorded",
+                "backupCopiesMayRemain",
+                "backupRetentionUntil",
+                "completedAt",
+                "restoreReplayId",
+                "restoreReplayEvidenceRecorded",
+                "restoreReplayRequestedAt",
+                "restoreReplayObjectErasedAt",
+                "policyVersion",
+                "backupRetentionPolicyVersion",
+                "backupRetentionDays"
+        }) {
+            assertTrue(erasureResponse.has(property));
+        }
+        assertFalse(erasureResponse.has("ownerId"));
+        assertFalse(erasureResponse.has("documentIds"));
+        assertFalse(erasureResponse.has("approvalReference"));
+        assertFalse(erasureResponse.has("evidenceReference"));
+        assertFalse(erasureResponse.has("ownerFingerprint"));
+        assertFalse(erasureResponse.has("journalObjectKey"));
+        assertFalse(erasureResponse.has("journalObjectVersion"));
+        assertFalse(erasureResponse.has("journalContentSha256"));
+        assertEquals(
+                erasureResponse.size(),
+                generated.at("/components/schemas/PermanentErasureResponse/required")
+                        .size());
+        var readinessSchema = generated.at(
+                "/components/schemas/PermanentErasureReadinessResponse");
+        assertEquals(
+                readinessSchema.path("properties").size(),
+                readinessSchema.path("required").size());
+        for (String status : new String[] {
+                "DISABLED",
+                "MISCONFIGURED",
+                "READY",
+                "RECONCILIATION_REQUIRED"
+        }) {
+            assertTrue(readinessSchema
+                    .at("/properties/status/enum")
+                    .toString()
+                    .contains("\"" + status + "\""));
+        }
+        for (String property : new String[] {
+                "recoveryJournalWritePending",
+                "recoveryJournalEvidenceMissing",
+                "liveErasureReconciliationPending",
+                "restoreJournalReadPending",
+                "restoreReplayPending",
+                "backupRetentionPending"
+        }) {
+            assertTrue(readinessSchema.path("properties").has(property));
+        }
+        var erasureStates = generated.at(
+                "/components/schemas/PermanentErasureResponse/properties/status/enum");
+        for (String state : new String[] {
+                "JOURNAL_PENDING",
+                "OBJECT_ERASURE_PENDING",
+                "RESTORE_JOURNAL_READ_PENDING",
+                "RESTORE_REPLAY_PENDING",
+                "BACKUP_RETENTION_PENDING",
+                "COMPLETED"
+        }) {
+            assertTrue(erasureStates.toString().contains("\"" + state + "\""));
+        }
+        var upload = generated.at(
+                "/paths/~1api~1v1~1applications~1{applicationId}~1documents~1{documentType}~1uploads/post");
+        assertTrue(upload.isObject());
+        assertTrue(upload.at("/requestBody/content/multipart~1form-data").isObject());
+        assertTrue(upload.at("/security/0/serviceToken").isArray());
+        assertTrue(generated.at(
+                "/paths/~1api~1v1~1application-document-uploads~1{operationId}/get").isObject());
+        var uploadState = generated.at(
+                "/components/schemas/ApplicationDocumentUploadResponse/properties/state/enum");
+        for (String state : new String[] {
+                "RECEIVED",
+                "QUARANTINED",
+                "SCANNING",
+                "SCANNED_CLEAN",
+                "EXTRACTING",
+                "READY",
+                "REJECTED",
+                "FAILED",
+                "SCAN_UNAVAILABLE"
+        }) {
+            assertTrue(uploadState.toString().contains("\"" + state + "\""));
+        }
+        assertTrue(generated.at(
+                "/paths/~1api~1v1~1document-activity/get").isObject());
+        var activity = generated.at(
+                "/components/schemas/DocumentActivityEventResponse/properties");
+        assertTrue(activity.path("eventType").isObject());
+        assertTrue(activity.path("documentFamilyId").isObject());
+        assertTrue(activity.path("version").isObject());
+        assertTrue(activity.path("occurredAt").isObject());
+        assertTrue(activity.path("content").isMissingNode());
+        assertTrue(activity.path("fileName").isMissingNode());
+        assertTrue(activity.path("contentSha256").isMissingNode());
+        assertTrue(activity.path("scannerDetails").isMissingNode());
+        assertTrue(activity.path("notes").isMissingNode());
+        assertTrue(generated.at(
+                        "/components/schemas/GeneratedDocumentResponse/properties")
+                .has("purgedAt"));
+        assertTrue(generated.at(
+                        "/components/schemas/GeneratedDocumentResponse/properties")
+                .has("unavailableReason"));
+        var generatedDocument = generated.at(
+                "/components/schemas/GeneratedDocumentResponse/properties");
+        for (String property : new String[] {
+                "originalContentSha256",
+                "originalContentSize",
+                "originalArtifactId",
+                "originalFileType",
+                "extractionState",
+                "sourceType"
+        }) {
+            assertTrue(generatedDocument.has(property));
+        }
+        var documentReference = generated.at(
+                "/components/schemas/DocumentReferenceResponse/properties");
+        for (String property : new String[] {
+                "originalContentSha256",
+                "originalContentSize",
+                "originalArtifactId",
+                "originalFileType",
+                "extractionState",
+                "sourceType"
+        }) {
+            assertTrue(documentReference.has(property));
+        }
+        assertTrue(generated.at(
+                        "/components/schemas/DocumentVersionHistoryItem/properties")
+                .has("applicationAssociations"));
+        assertTrue(generated.at(
+                        "/components/schemas/DocumentTombstoneAssociationResponse/properties")
+                .has("associationState"));
+        assertFalse(generated.at(
+                        "/components/schemas/DocumentTombstoneAssociationResponse/properties")
+                .has("contentSha256"));
+        assertEquals(
+                "downloadDocumentArtifact",
+                generated.at("/paths/~1api~1v1~1documents~1{generatedDocumentId}~1artifacts~1{artifactId}~1download/get/operationId")
+                        .asText());
+        var downloadHeaders = generated.at(
+                "/paths/~1api~1v1~1documents~1{generatedDocumentId}~1artifacts~1{artifactId}~1download/get/responses/200/headers");
+        for (String header : new String[] {
+                "Content-Disposition",
+                "X-Content-Type-Options",
+                "Cache-Control",
+                "Pragma",
+                "Content-Length"
+        }) {
+            assertFalse(downloadHeaders.path(header).isMissingNode());
+        }
+        assertEquals(
+                "Proprietary and confidential",
+                generated.at("/info/license/name").asText());
+        assertEquals(
+                "http://localhost:8089",
+                generated.at("/servers/0/url").asText());
+
+        String formattedSpecification = objectMapper.writerWithDefaultPrettyPrinter()
+                .writeValueAsString(generated)
+                + System.lineSeparator();
+
         Files.createDirectories(Path.of("target"));
-        Files.writeString(Path.of("target/openapi.json"), spec);
+        Files.writeString(Path.of("target/openapi.json"), formattedSpecification);
+
+        if (Boolean.getBoolean("documentStore.updateContract")) {
+            Files.writeString(CONTRACT, formattedSpecification);
+        } else {
+            assertEquals(
+                    objectMapper.readTree(Files.readString(CONTRACT)),
+                    generated,
+                    "Published OpenAPI contract is stale; use the documented update command and review the diff");
+        }
     }
 }

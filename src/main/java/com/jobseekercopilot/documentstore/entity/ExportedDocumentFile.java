@@ -7,7 +7,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -31,11 +30,14 @@ public class ExportedDocumentFile {
     @Id
     private UUID id;
 
-    @Column(nullable = false)
+    @Column(name = "generated_document_id", nullable = false)
     private UUID generatedDocumentId;
 
+    @Column(name = "owner_id", nullable = false, updatable = false)
+    private String ownerId;
+
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "generatedDocumentId", insertable = false, updatable = false)
+    @JoinColumn(name = "generated_document_id", insertable = false, updatable = false)
     private GeneratedDocument generatedDocument;
 
     @Enumerated(EnumType.STRING)
@@ -57,9 +59,38 @@ public class ExportedDocumentFile {
     @Builder.Default
     private boolean active = true;
 
-    @Lob
+    @Column(name = "current_slot")
+    private Short currentSlot;
+
+    @Column(name = "operation_key", length = 128)
+    private String operationKey;
+
+    @Column(name = "request_sha256", length = 64)
+    private String requestSha256;
+
     @Column(nullable = false)
-    private byte[] fileContent;
+    @Builder.Default
+    private int version = 1;
+
+    @Column(name = "storage_key", nullable = false, unique = true, length = 512)
+    private String storageKey;
+
+    @Column(name = "content_size", nullable = false)
+    private long contentSize;
+
+    @Column(name = "content_sha256", nullable = false, length = 64)
+    private String contentSha256;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "storage_status", nullable = false)
+    @Builder.Default
+    private ObjectStorageStatus storageStatus = ObjectStorageStatus.AVAILABLE;
+
+    @Column(name = "stored_at", nullable = false)
+    private LocalDateTime storedAt;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -79,10 +110,19 @@ public class ExportedDocumentFile {
         if (updatedAt == null) {
             updatedAt = now;
         }
+        if (storedAt == null) {
+            storedAt = now;
+        }
+        syncCurrentSlot();
     }
 
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
+        syncCurrentSlot();
+    }
+
+    private void syncCurrentSlot() {
+        currentSlot = active ? (short) 1 : null;
     }
 }

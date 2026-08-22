@@ -8,7 +8,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Data
@@ -39,9 +39,24 @@ public class DocumentFileResponse {
     @Schema(description = "Whether this is the active file for its document and type", example = "true")
     private boolean active;
 
+    @Schema(description = "Monotonic version within this generated document and file type", example = "2")
+    private int version;
+
+    @Schema(description = "Object size in bytes", example = "18432")
+    private long contentSize;
+
+    @Schema(description = "Lowercase SHA-256 digest used to verify object integrity")
+    private String contentSha256;
+
+    @Schema(description = "Storage lifecycle status", example = "AVAILABLE")
+    private com.jobseekercopilot.documentstore.entity.ObjectStorageStatus storageStatus;
+
+    @Schema(description = "Timestamp when the object store accepted the file")
+    private OffsetDateTime storedAt;
+
     @Schema(description = "Timestamp when the exported file was saved")
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
     @Schema(description = "Timestamp when the exported file was last updated")
-    private LocalDateTime updatedAt;
+    private OffsetDateTime updatedAt;
 }

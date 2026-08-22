@@ -27,14 +27,14 @@ public class CreateDocumentFileRequest {
     private FileType fileType;
 
     @NotBlank(message = "fileName is required")
-    @Schema(description = "Download filename", example = "cv.docx", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "Untrusted producer filename used only for extension and safety validation; responses use a generated safe name", example = "cv.docx", maxLength = 255, requiredMode = Schema.RequiredMode.REQUIRED)
     private String fileName;
 
     @NotBlank(message = "mimeType is required")
-    @Schema(description = "File MIME type", example = "application/vnd.openxmlformats-officedocument.wordprocessingml.document", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "Untrusted producer MIME claim validated against the declared type and content", example = "application/vnd.openxmlformats-officedocument.wordprocessingml.document", requiredMode = Schema.RequiredMode.REQUIRED)
     private String mimeType;
 
     @NotBlank(message = "fileContentBase64 is required")
-    @Schema(description = "Base64-encoded file bytes", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "Base64-encoded file bytes subject to the configured decoded byte and archive limits", requiredMode = Schema.RequiredMode.REQUIRED)
     private String fileContentBase64;
 }

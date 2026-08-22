@@ -6,35 +6,164 @@ spring:
     name: document-store-service
   servlet:
     multipart:
-      max-file-size: 25MB
-      max-request-size: 30MB
+      max-file-size: ${DOCUMENT_STORE_MAXIMUM_FILE_BYTES:10485760}
+      max-request-size: ${DOCUMENT_STORE_MAXIMUM_REQUEST_BYTES:11534336}
   datasource:
-    url: jdbc:h2:mem:documentstoredb
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    url: ${DOCUMENT_STORE_DATABASE_URL}
+    driver-class-name: org.postgresql.Driver
+    username: ${DOCUMENT_STORE_DATABASE_USERNAME}
+    password: ${DOCUMENT_STORE_DATABASE_PASSWORD}
+    hikari:
+      initialization-fail-timeout: 1
+      data-source-properties:
+        sslmode: ${DOCUMENT_STORE_DATABASE_SSL_MODE:verify-full}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration/common
+    clean-disabled: true
+    validate-on-migrate: true
+    validate-migration-naming: true
   h2:
     console:
-      enabled: true
-      path: /h2-console
-      settings:
-        web-allow-others: true
+      enabled: false
   jpa:
     hibernate:
-      ddl-auto: update
-    show-sql: true
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
+        jdbc:
+          time_zone: UTC
 
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db,documentStorage
   endpoints:
     web:
       exposure:
         include: health
+
+document-store:
+  reconciliation:
+    enabled: ${DOCUMENT_STORE_RECONCILIATION_ENABLED:true}
+    run-on-startup: ${DOCUMENT_STORE_RECONCILIATION_RUN_ON_STARTUP:false}
+    batch-size: ${DOCUMENT_STORE_RECONCILIATION_BATCH_SIZE:50}
+    minimum-age-seconds: ${DOCUMENT_STORE_RECONCILIATION_MINIMUM_AGE_SECONDS:300}
+    initial-delay-ms: ${DOCUMENT_STORE_RECONCILIATION_INITIAL_DELAY_MS:60000}
+    fixed-delay-ms: ${DOCUMENT_STORE_RECONCILIATION_FIXED_DELAY_MS:300000}
+    object-prefix: documents/
+  retention:
+    purge-enabled: ${DOCUMENT_STORE_PURGE_ENABLED:false}
+    permanent-erasure-enabled: ${DOCUMENT_STORE_PERMANENT_ERASURE_ENABLED:false}
+    permanent-erasure-write-fence-enabled: ${DOCUMENT_STORE_PERMANENT_ERASURE_WRITE_FENCE_ENABLED:false}
+    versioned-object-erasure-enabled: ${DOCUMENT_STORE_VERSIONED_OBJECT_ERASURE_ENABLED:false}
+    maintenance-enabled: ${DOCUMENT_STORE_RETENTION_MAINTENANCE_ENABLED:false}
+    recovery-days: ${DOCUMENT_STORE_RECOVERY_DAYS:30}
+    completed-operation-days: ${DOCUMENT_STORE_COMPLETED_OPERATION_RETENTION_DAYS:90}
+    lifecycle-audit-days: ${DOCUMENT_STORE_LIFECYCLE_AUDIT_DAYS:365}
+    maximum-backup-retention-days: ${DOCUMENT_STORE_MAXIMUM_BACKUP_RETENTION_DAYS:35}
+    backup-retention-policy-version: ${DOCUMENT_STORE_BACKUP_RETENTION_POLICY_VERSION:UNAPPROVED}
+    permanent-erasure-batch-size: ${DOCUMENT_STORE_PERMANENT_ERASURE_BATCH_SIZE:10}
+    permanent-erasure-fixed-delay-ms: ${DOCUMENT_STORE_PERMANENT_ERASURE_FIXED_DELAY_MS:300000}
+    maintenance-batch-size: ${DOCUMENT_STORE_RETENTION_BATCH_SIZE:50}
+    maintenance-fixed-delay-ms: ${DOCUMENT_STORE_RETENTION_FIXED_DELAY_MS:86400000}
+    policy-version: ${DOCUMENT_STORE_RETENTION_POLICY_VERSION:UNAPPROVED}
+    erasure-fingerprint-key: ${DOCUMENT_STORE_ERASURE_FINGERPRINT_KEY:}
+    erasure-fingerprint-previous-keys: ${DOCUMENT_STORE_ERASURE_FINGERPRINT_PREVIOUS_KEYS:}
+  permanent-erasure-journal:
+    provider: ${DOCUMENT_STORE_ERASURE_JOURNAL_PROVIDER:disabled}
+    filesystem-root: ${DOCUMENT_STORE_ERASURE_JOURNAL_FILESYSTEM_ROOT:}
+    object-lock-enabled: ${DOCUMENT_STORE_ERASURE_JOURNAL_OBJECT_LOCK_ENABLED:false}
+    retention-policy-version: ${DOCUMENT_STORE_ERASURE_JOURNAL_RETENTION_POLICY_VERSION:UNAPPROVED}
+    s3:
+      credentials-provider: ${DOCUMENT_STORE_ERASURE_JOURNAL_CREDENTIALS_PROVIDER:static}
+      endpoint: ${DOCUMENT_STORE_ERASURE_JOURNAL_ENDPOINT:}
+      region: ${DOCUMENT_STORE_ERASURE_JOURNAL_REGION:}
+      bucket: ${DOCUMENT_STORE_ERASURE_JOURNAL_BUCKET:}
+      access-key: ${DOCUMENT_STORE_ERASURE_JOURNAL_ACCESS_KEY:}
+      secret-key: ${DOCUMENT_STORE_ERASURE_JOURNAL_SECRET_KEY:}
+      kms-key-id: ${DOCUMENT_STORE_ERASURE_JOURNAL_KMS_KEY_ID:}
+      path-style-access: ${DOCUMENT_STORE_ERASURE_JOURNAL_PATH_STYLE_ACCESS:false}
+  validation:
+    maximum-file-bytes: ${DOCUMENT_STORE_MAXIMUM_FILE_BYTES:10485760}
+    maximum-docx-entries: ${DOCUMENT_STORE_MAXIMUM_DOCX_ENTRIES:256}
+    maximum-docx-entry-bytes: ${DOCUMENT_STORE_MAXIMUM_DOCX_ENTRY_BYTES:10485760}
+    maximum-docx-expanded-bytes: ${DOCUMENT_STORE_MAXIMUM_DOCX_EXPANDED_BYTES:26214400}
+    maximum-docx-expansion-ratio: ${DOCUMENT_STORE_MAXIMUM_DOCX_EXPANSION_RATIO:100}
+    maximum-pdf-link-annotations: ${DOCUMENT_STORE_MAXIMUM_PDF_LINK_ANNOTATIONS:64}
+    maximum-pdf-link-target-characters: ${DOCUMENT_STORE_MAXIMUM_PDF_LINK_TARGET_CHARACTERS:2048}
+  upload:
+    maximum-families-per-owner: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_FAMILIES:100}
+    maximum-versions-per-family: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_VERSIONS_PER_FAMILY:20}
+    maximum-original-bytes-per-owner: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_ORIGINAL_BYTES:524288000}
+    maximum-attempts-per-window: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_ATTEMPTS_PER_WINDOW:20}
+    rate-window-seconds: ${DOCUMENT_STORE_UPLOAD_RATE_WINDOW_SECONDS:60}
+    maximum-pdf-pages: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_PDF_PAGES:100}
+    maximum-extracted-characters: ${DOCUMENT_STORE_UPLOAD_MAXIMUM_EXTRACTED_CHARACTERS:1000000}
+    extraction-timeout-seconds: ${DOCUMENT_STORE_UPLOAD_EXTRACTION_TIMEOUT_SECONDS:15}
+    cleanup-enabled: ${DOCUMENT_STORE_UPLOAD_CLEANUP_ENABLED:true}
+    cleanup-minimum-age-seconds: ${DOCUMENT_STORE_UPLOAD_CLEANUP_MINIMUM_AGE_SECONDS:300}
+    cleanup-fixed-delay-ms: ${DOCUMENT_STORE_UPLOAD_CLEANUP_FIXED_DELAY_MS:300000}
+    cleanup-batch-size: ${DOCUMENT_STORE_UPLOAD_CLEANUP_BATCH_SIZE:50}
+    scanner:
+      host: ${DOCUMENT_STORE_CLAMAV_HOST:clamav}
+      port: ${DOCUMENT_STORE_CLAMAV_PORT:3310}
+      connect-timeout-ms: ${DOCUMENT_STORE_CLAMAV_CONNECT_TIMEOUT_MS:2000}
+      read-timeout-ms: ${DOCUMENT_STORE_CLAMAV_READ_TIMEOUT_MS:30000}
+      maximum-signature-age-hours: ${DOCUMENT_STORE_CLAMAV_MAXIMUM_SIGNATURE_AGE_HOURS:48}
+  object-storage:
+    provider: ${DOCUMENT_STORE_OBJECT_PROVIDER:s3}
+    filesystem-root: ${DOCUMENT_STORE_FILESYSTEM_ROOT:}
+    s3:
+      credentials-provider: ${DOCUMENT_STORE_OBJECT_CREDENTIALS_PROVIDER:static}
+      endpoint: ${DOCUMENT_STORE_OBJECT_ENDPOINT:}
+      region: ${DOCUMENT_STORE_OBJECT_REGION:}
+      bucket: ${DOCUMENT_STORE_OBJECT_BUCKET:}
+      access-key: ${DOCUMENT_STORE_OBJECT_ACCESS_KEY:}
+      secret-key: ${DOCUMENT_STORE_OBJECT_SECRET_KEY:}
+      kms-key-id: ${DOCUMENT_STORE_OBJECT_KMS_KEY_ID:}
+      path-style-access: ${DOCUMENT_STORE_OBJECT_PATH_STYLE:false}
+  database:
+    production-safety-check: true
+    encryption-at-rest-enabled: ${DOCUMENT_STORE_ENCRYPTION_AT_REST_ENABLED:false}
+    encryption-key-reference: ${DOCUMENT_STORE_ENCRYPTION_KEY_REFERENCE:}
+    backup-encryption-enabled: ${DOCUMENT_STORE_BACKUP_ENCRYPTION_ENABLED:false}
+    backup-key-reference: ${DOCUMENT_STORE_BACKUP_KEY_REFERENCE:}
+  security:
+    jwk-set-uri: ${AUTH_JWKS_URI:http://authentication-service:8084/.well-known/jwks.json}
+    issuer: ${DOCUMENT_STORE_JWT_ISSUER:job-seeker-copilot-authentication}
+    audience: ${DOCUMENT_STORE_JWT_AUDIENCE:job-seeker-copilot-services}
+    service-identity:
+      producer-token: ${DOCUMENT_STORE_PRODUCER_TOKEN:}
+      reader-token: ${DOCUMENT_STORE_READER_TOKEN:}
+      retention-admin-token: ${DOCUMENT_STORE_RETENTION_ADMIN_TOKEN:}
+    environment-data-token: ${ENVIRONMENT_DATA_TOKEN:}
+
+services:
+  application-tracker-service:
+    base-url: ${APPLICATION_TRACKER_SERVICE_URL:http://application-tracker-service:8085}
+    reader-token: ${APPLICATION_TRACKER_READER_TOKEN:}
+    producer-token: ${APPLICATION_TRACKER_PRODUCER_TOKEN:}
 
 logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{correlationId}] [%X{serviceName}] [%thread] %logger{36} - %msg%n"
   level:
     com.jobseekercopilot: ${APP_LOG_LEVEL:INFO}
+    com.zaxxer.hikari: WARN
+    org.flywaydb.core: WARN
+    org.hibernate.SQL: "OFF"
+    org.hibernate.orm.jdbc.bind: "OFF"
+    org.springframework.jdbc.core: INFO
+    org.springframework.web: INFO
+    org.springframework.web.servlet.handler.HandlerMappingIntrospector: ERROR

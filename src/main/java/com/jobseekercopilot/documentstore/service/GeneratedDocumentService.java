@@ -1,134 +1,480 @@
 package com.jobseekercopilot.documentstore.service;
 
 import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
+import com.jobseekercopilot.documentstore.dto.DocumentReferenceResponse;
+import com.jobseekercopilot.documentstore.dto.DocumentEvidenceProvenance;
+import com.jobseekercopilot.documentstore.dto.GenerationMetadata;
 import com.jobseekercopilot.documentstore.dto.GeneratedDocumentResponse;
+import com.jobseekercopilot.documentstore.config.DocumentUploadProperties;
+import com.jobseekercopilot.documentstore.entity.DocumentActivityType;
+import com.jobseekercopilot.documentstore.entity.DocumentGroundingState;
+import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
+import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
+import com.jobseekercopilot.documentstore.entity.GenerationProvenance;
 import com.jobseekercopilot.documentstore.entity.GeneratedDocument;
+import com.jobseekercopilot.documentstore.entity.DocumentEvidenceProvenanceConverter;
+import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.exception.ResourceNotFoundException;
+import com.jobseekercopilot.documentstore.observability.DocumentStoreMetrics;
 import com.jobseekercopilot.documentstore.repository.GeneratedDocumentRepository;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.HashSet;
 import java.util.UUID;
+import java.time.LocalDateTime;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class GeneratedDocumentService {
 
-    private static final Logger log = LoggerFactory.getLogger(GeneratedDocumentService.class);
-
     private final GeneratedDocumentRepository repository;
+    private final DocumentRetentionService retentionService;
+    private final DocumentOperationLock operationLock;
+    private final DocumentOwnerErasureGuard ownerErasureGuard;
+    private final DocumentStoreMetrics metrics;
+    private final DocumentActivityService activityService;
+    private final DocumentUploadProperties uploadProperties;
 
-    public GeneratedDocumentResponse createDocument(CreateDocumentRequest request) {
-        long startedAt = System.nanoTime();
-        Integer version = request.getVersion();
-        if (version == null && request.getApplicationId() != null && !request.getApplicationId().isBlank()) {
-            version = nextVersion(request.getApplicationId(), request.getDocumentType());
+    @Transactional
+    public GeneratedDocumentResponse createDocument(
+            String ownerId,
+            CreateDocumentRequest request,
+            String requestedOperationKey) {
+        ownerErasureGuard.requireWritable(ownerId);
+        return metrics.observe(
+                "document",
+                "create",
+                request.getDocumentType(),
+                null,
+                () -> createDocumentInternal(
+                        ownerId, request, requestedOperationKey));
+    }
+
+    private GeneratedDocumentResponse createDocumentInternal(
+            String ownerId,
+            CreateDocumentRequest request,
+            String requestedOperationKey) {
+        String operationKey = IdempotencyKeys.validate(requestedOperationKey);
+        if (request.getTitle() == null || request.getTitle().isBlank()) {
+            throw new IllegalArgumentException("Document title is required.");
         }
+        String applicationId = blankToNull(request.getApplicationId());
+        if (Boolean.TRUE.equals(request.getActive())) {
+            throw new IllegalArgumentException(
+                    "Documents are created as drafts and must be explicitly approved.");
+        }
+        DocumentSourceType sourceType = request.getSourceType() == null
+                ? DocumentSourceType.GENERATED
+                : request.getSourceType();
+        validateGenerationMetadata(sourceType, request.getGenerationMetadata());
+        validateEvidenceProvenance(
+                sourceType, request.getEvidenceProvenance());
+        String fingerprint = OperationFingerprint.sha256(
+                applicationId,
+                request.getDocumentFamilyId(),
+                request.getJobId(),
+                request.getDocumentType(),
+                request.getTitle(),
+                OperationFingerprint.sha256(request.getContent()),
+                request.getVersion(),
+                blankToNull(request.getOriginalFilename()),
+                sourceType,
+                generationMetadataFingerprint(request.getGenerationMetadata()),
+                DocumentEvidenceProvenanceConverter.encode(
+                        request.getEvidenceProvenance()),
+                blankToNull(request.getCreatedBy()));
+
+        if (operationKey != null) {
+            operationLock.acquire(lockScope("document-idempotency", ownerId, operationKey));
+            GeneratedDocument replay = repository
+                    .findByUserIdAndOperationKey(ownerId, operationKey)
+                    .orElse(null);
+            if (replay != null) {
+                requireMatchingFingerprint(replay.getRequestSha256(), fingerprint);
+                return mapToResponse(replay);
+            }
+        }
+
+        UUID documentFamilyId = request.getDocumentFamilyId() == null
+                ? UUID.randomUUID()
+                : request.getDocumentFamilyId();
+        if (sourceType == DocumentSourceType.UPLOADED) {
+            operationLock.acquire(lockScope("uploaded-document-quota", ownerId));
+            boolean existingFamily = repository
+                    .findFirstByDocumentFamilyIdAndUserIdOrderByVersionDesc(
+                            documentFamilyId, ownerId)
+                    .isPresent();
+            if (!existingFamily
+                    && repository.countRetainedFamilies(ownerId)
+                            >= uploadProperties.getMaximumFamiliesPerOwner()) {
+                throw new OperationConflictException(
+                        "Uploaded document family quota has been reached.");
+            }
+        }
+        operationLock.acquire(lockScope("document-family", ownerId, documentFamilyId));
+        GeneratedDocument latestVersion = repository
+                .findFirstByDocumentFamilyIdAndUserIdOrderByVersionDesc(
+                        documentFamilyId, ownerId)
+                .orElse(null);
+        int nextVersion = latestVersion == null ? 1 : latestVersion.getVersion() + 1;
+        if (sourceType == DocumentSourceType.UPLOADED
+                && nextVersion > uploadProperties.getMaximumVersionsPerFamily()) {
+            throw new OperationConflictException(
+                    "Uploaded document family version quota has been reached.");
+        }
+        validateFamily(request, latestVersion);
+        if (request.getVersion() != null && request.getVersion() != nextVersion) {
+            throw new OperationConflictException(
+                    "Requested document version does not match the next available version.");
+        }
+
         GeneratedDocument document = GeneratedDocument.builder()
-                .userId(request.getUserId())
+                .userId(ownerId)
                 .jobId(request.getJobId())
-                .applicationId(blankToNull(request.getApplicationId()))
+                .applicationId(applicationId)
+                .documentFamilyId(documentFamilyId)
                 .documentType(request.getDocumentType())
                 .title(request.getTitle())
                 .content(request.getContent())
-                .version(version == null ? 1 : version)
-                .active(request.getActive() == null || request.getActive())
+                .contentSha256(contentSha256(request.getContent()))
+                .version(nextVersion)
+                .active(false)
+                .lifecycleState(DocumentLifecycleState.DRAFT)
+                .generationProvenance(toEntity(request.getGenerationMetadata()))
+                .evidenceProvenance(request.getEvidenceProvenance())
+                .groundingState(groundingState(
+                        sourceType, request.getEvidenceProvenance()))
+                .parentDocumentId(
+                        latestVersion == null ? null : latestVersion.getId())
+                .parentDocumentVersion(
+                        latestVersion == null
+                                ? null
+                                : latestVersion.getVersion())
+                .operationKey(operationKey)
+                .requestSha256(operationKey == null ? null : fingerprint)
                 .originalFilename(blankToNull(request.getOriginalFilename()))
-                .sourceType(request.getSourceType() == null ? DocumentSourceType.GENERATED : request.getSourceType())
+                .sourceType(sourceType)
                 .createdBy(blankToNull(request.getCreatedBy()))
                 .build();
 
-        GeneratedDocument saved = repository.save(document);
-        log.info("Generated document metadata saved documentId={} userId={} jobId={} documentType={} titlePresent={} durationMs={}",
-                saved.getId(),
-                saved.getUserId(),
-                saved.getJobId(),
+        GeneratedDocument saved = repository.saveAndFlush(document);
+        activityService.recordOnce(
+                "document-created:" + saved.getId(),
+                DocumentActivityType.DOCUMENT_VERSION_CREATED,
+                saved,
+                "CREATED",
+                saved.getCreatedAt());
+        metrics.recordPayload(
+                "document",
+                "stored",
                 saved.getDocumentType(),
-                saved.getTitle() != null && !saved.getTitle().isBlank(),
-                (System.nanoTime() - startedAt) / 1_000_000);
+                null,
+                textSize(saved.getContent()));
         return mapToResponse(saved);
     }
 
-    public GeneratedDocumentResponse getDocumentById(UUID id) {
-        long startedAt = System.nanoTime();
-        GeneratedDocument document = repository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Document not found with id: " + id));
-        log.info("Generated document metadata loaded documentId={} userId={} documentType={} durationMs={}",
-                id,
-                document.getUserId(),
-                document.getDocumentType(),
-                (System.nanoTime() - startedAt) / 1_000_000);
-        return mapToResponse(document);
+    public GeneratedDocumentResponse getDocumentById(String ownerId, UUID id) {
+        return metrics.observe("document", "retrieve", null, null, () -> {
+            GeneratedDocument document = findOwnedDocument(ownerId, id);
+            metrics.recordPayload(
+                    "document",
+                    "retrieved",
+                    document.getDocumentType(),
+                    null,
+                    textSize(document.getContent()));
+            return mapToResponse(document);
+        });
+    }
+
+    public DocumentReferenceResponse getDocumentReference(String ownerId, UUID id) {
+        return metrics.observe(
+                "document",
+                "retrieve",
+                null,
+                null,
+                () -> getDocumentReferenceInternal(ownerId, id));
+    }
+
+    private DocumentReferenceResponse getDocumentReferenceInternal(
+            String ownerId, UUID id) {
+        GeneratedDocument document = findOwnedDocument(ownerId, id);
+        if (document.getLifecycleState() != DocumentLifecycleState.APPROVED) {
+            throw new OperationConflictException(
+                    "Document version is not approved for application use.");
+        }
+        if (document.getRetentionState() != DocumentRetentionState.AVAILABLE) {
+            throw new OperationConflictException(
+                    "Document version is not available for application use.");
+        }
+        return mapToReference(document);
     }
 
     public List<GeneratedDocumentResponse> getDocumentsByUserId(String userId) {
-        return repository.findByUserId(userId).stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+        return metrics.observe("document", "list", null, null, () -> {
+            List<GeneratedDocument> documents = repository.findByUserId(userId);
+            recordRetrievedBatch(documents);
+            return documents.stream()
+                    .map(this::mapToResponse)
+                    .collect(Collectors.toList());
+        });
     }
 
     public List<GeneratedDocumentResponse> getDocumentsByUserIdAndJobId(String userId, String jobId) {
-        return repository.findByUserIdAndJobId(userId, jobId).stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+        return metrics.observe("document", "list", null, null, () -> {
+            List<GeneratedDocument> documents =
+                    repository.findByUserIdAndJobId(userId, jobId);
+            recordRetrievedBatch(documents);
+            return documents.stream()
+                    .map(this::mapToResponse)
+                    .collect(Collectors.toList());
+        });
     }
 
-    public void deleteDocument(UUID id) {
-        if (!repository.existsById(id)) {
-            throw new ResourceNotFoundException("Document not found with id: " + id);
-        }
-        repository.deleteById(id);
+    @Transactional
+    public void deleteDocument(String ownerId, UUID id, String actorId) {
+        ownerErasureGuard.requireWritable(ownerId);
+        metrics.observe("document", "delete", null, null, () -> {
+            retentionService.softDelete(ownerId, id, actorId);
+        });
     }
 
-    public GeneratedDocumentResponse activateDocumentVersion(String applicationId, DocumentType documentType, UUID documentId) {
-        GeneratedDocument document = repository.findById(documentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Document not found with id: " + documentId));
+    @Transactional
+    public GeneratedDocumentResponse activateDocumentVersion(
+            String ownerId,
+            String applicationId,
+            DocumentType documentType,
+            UUID documentId) {
+        ownerErasureGuard.requireWritable(ownerId);
+        return metrics.observe(
+                "document",
+                "activate",
+                documentType,
+                null,
+                () -> activateDocumentVersionInternal(
+                        ownerId, applicationId, documentType, documentId));
+    }
+
+    private GeneratedDocumentResponse activateDocumentVersionInternal(
+            String ownerId,
+            String applicationId,
+            DocumentType documentType,
+            UUID documentId) {
+        GeneratedDocument document = findOwnedDocument(ownerId, documentId);
         if (applicationId == null || applicationId.isBlank() || !applicationId.equals(document.getApplicationId())) {
-            throw new IllegalArgumentException("Document does not belong to application: " + applicationId);
+            throw ResourceNotFoundException.documentNotFound();
         }
         if (documentType == null || documentType != document.getDocumentType()) {
-            throw new IllegalArgumentException("Document type does not match requested activation type");
+            throw ResourceNotFoundException.documentNotFound();
         }
+        return selectCurrentVersion(ownerId, document);
+    }
 
-        List<GeneratedDocument> activeVersions =
-                repository.findByApplicationIdAndDocumentTypeAndActiveTrue(applicationId, documentType);
-        activeVersions.forEach(active -> active.setActive(false));
-        document.setActive(true);
-        activeVersions.add(document);
-        repository.saveAll(activeVersions);
-        log.info("Document version activated applicationId={} documentType={} documentId={} version={}",
-                applicationId,
-                documentType,
-                documentId,
-                document.getVersion());
+    @Transactional
+    public GeneratedDocumentResponse approveDocumentVersion(String ownerId, UUID documentId) {
+        ownerErasureGuard.requireWritable(ownerId);
+        return metrics.observe(
+                "document",
+                "activate",
+                null,
+                null,
+                () -> approveDocumentVersionInternal(ownerId, documentId));
+    }
+
+    private GeneratedDocumentResponse approveDocumentVersionInternal(
+            String ownerId, UUID documentId) {
+        GeneratedDocument document = findOwnedDocument(ownerId, documentId);
+        operationLock.acquire(lockScope(
+                "document-family", ownerId, document.getDocumentFamilyId()));
+        document = findOwnedDocument(ownerId, documentId);
+        if (document.getLifecycleState() == DocumentLifecycleState.APPROVED) {
+            requireAvailable(document);
+            return mapToResponse(document);
+        }
+        requireAvailable(document);
+        if (document.getSourceType() == DocumentSourceType.GENERATED
+                && document.getGenerationProvenance() == null) {
+            throw new OperationConflictException(
+                    "Generated document provenance is required before approval.");
+        }
+        document.setLifecycleState(DocumentLifecycleState.APPROVED);
+        document.setApprovedAt(LocalDateTime.now());
+        document.setApprovedBy(ownerId);
+        if (document.getContentSha256() == null) {
+            document.setContentSha256(contentSha256(document.getContent()));
+        }
+        repository.saveAndFlush(document);
         return mapToResponse(document);
     }
 
-    public void deactivateApplicationDocuments(String applicationId) {
+    @Transactional
+    public GeneratedDocumentResponse selectCurrentDocumentVersion(
+            String ownerId, UUID documentId) {
+        ownerErasureGuard.requireWritable(ownerId);
+        return metrics.observe(
+                "document",
+                "activate",
+                null,
+                null,
+                () -> selectCurrentDocumentVersionInternal(
+                        ownerId, documentId));
+    }
+
+    private GeneratedDocumentResponse selectCurrentDocumentVersionInternal(
+            String ownerId, UUID documentId) {
+        GeneratedDocument document = findOwnedDocument(ownerId, documentId);
+        return selectCurrentVersion(ownerId, document);
+    }
+
+    @Transactional
+    public void deactivateApplicationDocuments(String ownerId, String applicationId) {
+        ownerErasureGuard.requireWritable(ownerId);
+        metrics.observe("document", "deactivate", null, null, () -> {
+            deactivateApplicationDocumentsInternal(ownerId, applicationId);
+        });
+    }
+
+    private void deactivateApplicationDocumentsInternal(
+            String ownerId, String applicationId) {
         if (applicationId == null || applicationId.isBlank()) {
             return;
         }
-        List<GeneratedDocument> documents = repository.findAll().stream()
-                .filter(document -> applicationId.equals(document.getApplicationId()))
-                .toList();
-        documents.forEach(document -> document.setActive(false));
-        repository.saveAll(documents);
-        log.info("Application documents deactivated applicationId={} count={}", applicationId, documents.size());
+        // Current document selection belongs to the document family and is
+        // deliberately independent of application lifecycle transitions.
     }
 
-    private Integer nextVersion(String applicationId, DocumentType documentType) {
-        return repository.findByApplicationIdAndDocumentTypeOrderByVersionDesc(applicationId, documentType)
-                .stream()
-                .findFirst()
-                .map(GeneratedDocument::getVersion)
-                .map(version -> version + 1)
-                .orElse(1);
+    private void deactivateCurrentVersions(
+            String ownerId,
+            UUID documentFamilyId) {
+        List<GeneratedDocument> activeVersions =
+                repository.findByDocumentFamilyIdAndActiveTrueAndUserId(
+                        documentFamilyId,
+                        ownerId);
+        boolean repairedMultipleActive = activeVersions.size() > 1;
+        activeVersions.forEach(activeVersion -> activeVersion.setActive(false));
+        repository.saveAllAndFlush(activeVersions);
+        if (repairedMultipleActive) {
+            metrics.recordReconciliation(
+                    "document", "repaired", "multiple_active");
+        }
+    }
+
+    private GeneratedDocumentResponse selectCurrentVersion(
+            String ownerId, GeneratedDocument initialDocument) {
+        operationLock.acquire(lockScope(
+                "document-family", ownerId, initialDocument.getDocumentFamilyId()));
+        GeneratedDocument document = findOwnedDocument(ownerId, initialDocument.getId());
+        if (document.getLifecycleState() != DocumentLifecycleState.APPROVED) {
+            throw new OperationConflictException(
+                    "Only an approved document version can be selected as current.");
+        }
+        requireAvailable(document);
+        if (document.isActive()) {
+            return mapToResponse(document);
+        }
+        deactivateCurrentVersions(ownerId, document.getDocumentFamilyId());
+        document.setActive(true);
+        repository.saveAndFlush(document);
+        activityService.record(
+                DocumentActivityType.DOCUMENT_CURRENT_VERSION_CHANGED,
+                document,
+                "CURRENT_SELECTED",
+                LocalDateTime.now());
+        return mapToResponse(document);
+    }
+
+    private void validateFamily(
+            CreateDocumentRequest request, GeneratedDocument latestVersion) {
+        if (latestVersion == null) {
+            return;
+        }
+        if (!latestVersion.getJobId().equals(request.getJobId())
+                || latestVersion.getDocumentType() != request.getDocumentType()) {
+            throw ResourceNotFoundException.documentNotFound();
+        }
+        if (latestVersion.getRetentionState() != DocumentRetentionState.AVAILABLE) {
+            throw new OperationConflictException(
+                    "Archived or deleted document families must be restored before adding a version.");
+        }
+    }
+
+    private void validateGenerationMetadata(
+            DocumentSourceType sourceType, GenerationMetadata metadata) {
+        if (sourceType == DocumentSourceType.UPLOADED && metadata != null) {
+            throw new IllegalArgumentException(
+                    "Uploaded documents cannot include AI generation metadata.");
+        }
+    }
+
+    private void validateEvidenceProvenance(
+            DocumentSourceType sourceType,
+            DocumentEvidenceProvenance provenance) {
+        if (sourceType == DocumentSourceType.UPLOADED
+                && provenance != null) {
+            throw new IllegalArgumentException(
+                    "Uploaded documents cannot assert generated evidence provenance.");
+        }
+        if (provenance == null) {
+            return;
+        }
+        String calculated = ValidatedClaimLedgerDigest.calculate(
+                provenance.claimLedger());
+        if (!calculated.equals(
+                provenance.claimLedger().ledgerSha256())) {
+            throw new IllegalArgumentException(
+                    "Validated claim ledger digest does not match its exact claims.");
+        }
+        if (new HashSet<>(provenance.sectionOrder()).size()
+                != provenance.sectionOrder().size()) {
+            throw new IllegalArgumentException(
+                    "Evidence section order contains duplicates.");
+        }
+        HashSet<UUID> entryIds = new HashSet<>();
+        HashSet<UUID> revisionIds = new HashSet<>();
+        provenance.evidenceRevisions().forEach(reference -> {
+            if (!entryIds.add(reference.entryId())
+                    || !revisionIds.add(reference.revisionId())
+                    || !provenance.sectionOrder().contains(
+                            reference.category())) {
+                throw new IllegalArgumentException(
+                        "Evidence provenance contains duplicate or unordered revisions.");
+            }
+        });
+    }
+
+    private DocumentGroundingState groundingState(
+            DocumentSourceType sourceType,
+            DocumentEvidenceProvenance provenance) {
+        if (sourceType == DocumentSourceType.UPLOADED) {
+            return DocumentGroundingState.USER_EDITED_REVIEW_REQUIRED;
+        }
+        return provenance == null
+                ? DocumentGroundingState.LEGACY_UNSPECIFIED
+                : DocumentGroundingState.AI_GENERATED_EVIDENCE_VALIDATED;
+    }
+
+    private void requireMatchingFingerprint(String stored, String requested) {
+        if (!requested.equals(stored)) {
+            throw new OperationConflictException(
+                    "Idempotency-Key was already used for a different document operation.");
+        }
+    }
+
+    private String lockScope(String prefix, Object... parts) {
+        return prefix + ":" + OperationFingerprint.sha256(parts);
+    }
+
+    private GeneratedDocument findOwnedDocument(String ownerId, UUID id) {
+        return repository.findByIdAndUserId(id, ownerId)
+                .orElseThrow(ResourceNotFoundException::documentNotFound);
     }
 
     private GeneratedDocumentResponse mapToResponse(GeneratedDocument document) {
@@ -137,20 +483,159 @@ public class GeneratedDocumentService {
                 .userId(document.getUserId())
                 .jobId(document.getJobId())
                 .applicationId(document.getApplicationId())
+                .documentFamilyId(document.getDocumentFamilyId())
                 .documentType(document.getDocumentType())
                 .title(document.getTitle())
                 .content(document.getContent())
                 .version(document.getVersion())
                 .active(document.isActive())
+                .current(document.isActive())
+                .lifecycleState(document.getLifecycleState())
+                .retentionState(document.getRetentionState())
+                .contentSha256(document.getContentSha256())
+                .originalContentSha256(document.getOriginalContentSha256())
+                .originalContentSize(document.getOriginalContentSize())
+                .originalArtifactId(document.getOriginalArtifactId())
+                .originalFileType(document.getOriginalFileType())
+                .extractionState(document.getExtractionState())
+                .generationMetadata(toDto(document.getGenerationProvenance()))
+                .evidenceProvenance(document.getEvidenceProvenance())
+                .groundingState(document.getGroundingState())
+                .parentDocumentId(document.getParentDocumentId())
+                .parentDocumentVersion(document.getParentDocumentVersion())
+                .approvedAt(withUtcOffset(document.getApprovedAt()))
+                .approvedBy(document.getApprovedBy())
+                .archivedAt(withUtcOffset(document.getArchivedAt()))
+                .deletedAt(withUtcOffset(document.getDeletedAt()))
+                .purgeEligibleAt(withUtcOffset(document.getPurgeEligibleAt()))
+                .purgedAt(withUtcOffset(document.getPurgedAt()))
+                .unavailableReason(document.getUnavailableReason())
+                .legalHold(document.isLegalHold())
                 .originalFilename(document.getOriginalFilename())
                 .sourceType(document.getSourceType())
                 .createdBy(document.getCreatedBy())
-                .createdAt(document.getCreatedAt())
-                .updatedAt(document.getUpdatedAt())
+                .createdAt(withUtcOffset(document.getCreatedAt()))
+                .updatedAt(withUtcOffset(document.getUpdatedAt()))
                 .build();
+    }
+
+    private OffsetDateTime withUtcOffset(LocalDateTime value) {
+        return value == null ? null : value.atOffset(ZoneOffset.UTC);
+    }
+
+    private void requireAvailable(GeneratedDocument document) {
+        if (document.getRetentionState() != DocumentRetentionState.AVAILABLE) {
+            throw new OperationConflictException(
+                    "Archived or deleted documents cannot become current or be approved.");
+        }
+    }
+
+    private DocumentReferenceResponse mapToReference(GeneratedDocument document) {
+        return DocumentReferenceResponse.builder()
+                .documentId(document.getId())
+                .documentFamilyId(document.getDocumentFamilyId())
+                .jobId(document.getJobId())
+                .applicationId(document.getApplicationId())
+                .documentType(document.getDocumentType())
+                .version(document.getVersion())
+                .contentSha256(document.getContentSha256())
+                .originalContentSha256(document.getOriginalContentSha256())
+                .originalContentSize(document.getOriginalContentSize())
+                .originalArtifactId(document.getOriginalArtifactId())
+                .originalFileType(document.getOriginalFileType())
+                .extractionState(document.getExtractionState())
+                .sourceType(document.getSourceType())
+                .lifecycleState(document.getLifecycleState())
+                .current(document.isActive())
+                .generationMetadata(toDto(document.getGenerationProvenance()))
+                .evidenceProvenance(document.getEvidenceProvenance())
+                .groundingState(document.getGroundingState())
+                .parentDocumentId(document.getParentDocumentId())
+                .parentDocumentVersion(document.getParentDocumentVersion())
+                .build();
+    }
+
+    private GenerationProvenance toEntity(GenerationMetadata metadata) {
+        if (metadata == null) {
+            return null;
+        }
+        return GenerationProvenance.builder()
+                .releaseId(metadata.getReleaseId())
+                .bundleId(metadata.getBundleId())
+                .bundleVersion(metadata.getBundleVersion())
+                .bundleSha256(metadata.getBundleSha256())
+                .templateVersion(metadata.getTemplateVersion())
+                .templateSha256(metadata.getTemplateSha256())
+                .rulesVersion(metadata.getRulesVersion())
+                .rulesSha256(metadata.getRulesSha256())
+                .schemaId(metadata.getSchemaId())
+                .schemaVersion(metadata.getSchemaVersion())
+                .schemaSha256(metadata.getSchemaSha256())
+                .evaluationPolicyVersion(metadata.getEvaluationPolicyVersion())
+                .evaluationPolicySha256(metadata.getEvaluationPolicySha256())
+                .build();
+    }
+
+    private GenerationMetadata toDto(GenerationProvenance provenance) {
+        if (provenance == null) {
+            return null;
+        }
+        return GenerationMetadata.builder()
+                .releaseId(provenance.getReleaseId())
+                .bundleId(provenance.getBundleId())
+                .bundleVersion(provenance.getBundleVersion())
+                .bundleSha256(provenance.getBundleSha256())
+                .templateVersion(provenance.getTemplateVersion())
+                .templateSha256(provenance.getTemplateSha256())
+                .rulesVersion(provenance.getRulesVersion())
+                .rulesSha256(provenance.getRulesSha256())
+                .schemaId(provenance.getSchemaId())
+                .schemaVersion(provenance.getSchemaVersion())
+                .schemaSha256(provenance.getSchemaSha256())
+                .evaluationPolicyVersion(provenance.getEvaluationPolicyVersion())
+                .evaluationPolicySha256(provenance.getEvaluationPolicySha256())
+                .build();
+    }
+
+    private String generationMetadataFingerprint(GenerationMetadata metadata) {
+        if (metadata == null) {
+            return null;
+        }
+        return OperationFingerprint.sha256(
+                metadata.getReleaseId(),
+                metadata.getBundleId(),
+                metadata.getBundleVersion(),
+                metadata.getBundleSha256(),
+                metadata.getTemplateVersion(),
+                metadata.getTemplateSha256(),
+                metadata.getRulesVersion(),
+                metadata.getRulesSha256(),
+                metadata.getSchemaId(),
+                metadata.getSchemaVersion(),
+                metadata.getSchemaSha256(),
+                metadata.getEvaluationPolicyVersion(),
+                metadata.getEvaluationPolicySha256());
+    }
+
+    private String contentSha256(String content) {
+        return OperationFingerprint.contentSha256(
+                content.getBytes(StandardCharsets.UTF_8));
     }
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private void recordRetrievedBatch(List<GeneratedDocument> documents) {
+        long bytes = documents.stream()
+                .mapToLong(document -> textSize(document.getContent()))
+                .sum();
+        metrics.recordPayload("document", "retrieved", null, null, bytes);
+    }
+
+    private long textSize(String content) {
+        return content == null
+                ? 0
+                : content.getBytes(StandardCharsets.UTF_8).length;
     }
 }

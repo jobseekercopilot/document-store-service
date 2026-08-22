@@ -2,13 +2,18 @@ package com.jobseekercopilot.documentstore.dto;
 
 import com.jobseekercopilot.documentstore.entity.DocumentType;
 import com.jobseekercopilot.documentstore.entity.DocumentSourceType;
+import com.jobseekercopilot.documentstore.entity.DocumentLifecycleState;
+import com.jobseekercopilot.documentstore.entity.DocumentRetentionState;
+import com.jobseekercopilot.documentstore.entity.DocumentGroundingState;
+import com.jobseekercopilot.documentstore.entity.DocumentExtractionState;
+import com.jobseekercopilot.documentstore.entity.FileType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Data
@@ -30,6 +35,9 @@ public class GeneratedDocumentResponse {
     @Schema(description = "ID of the application this document version belongs to")
     private String applicationId;
 
+    @Schema(description = "Stable identifier shared by all versions of this document")
+    private UUID documentFamilyId;
+
     @Schema(description = "Type of document", example = "CV", allowableValues = {"CV", "COVER_LETTER"})
     private DocumentType documentType;
 
@@ -39,11 +47,64 @@ public class GeneratedDocumentResponse {
     @Schema(description = "Generated document content", example = "Generated CV content...")
     private String content;
 
-    @Schema(description = "Version number for this application/document type")
+    @Schema(description = "Immutable version number within the document family")
     private Integer version;
 
-    @Schema(description = "Whether this document version is active")
+    @Schema(description = "Deprecated alias for current", deprecated = true)
     private boolean active;
+
+    @Schema(description = "Whether this approved version is selected for future use")
+    private boolean current;
+
+    private DocumentLifecycleState lifecycleState;
+
+    @Schema(description = "Recoverable retention state")
+    private DocumentRetentionState retentionState;
+
+    @Schema(description = "SHA-256 of the stored text content")
+    private String contentSha256;
+
+    @Schema(description = "SHA-256 of the exact uploaded original bytes")
+    private String originalContentSha256;
+
+    private Long originalContentSize;
+
+    private UUID originalArtifactId;
+
+    private FileType originalFileType;
+
+    private DocumentExtractionState extractionState;
+
+    private GenerationMetadata generationMetadata;
+
+    private DocumentEvidenceProvenance evidenceProvenance;
+
+    @Schema(description = "Evidence-review state for this immutable document version")
+    private DocumentGroundingState groundingState;
+
+    @Schema(description = "Immediate parent document version, when this is a later version")
+    private UUID parentDocumentId;
+
+    private Integer parentDocumentVersion;
+
+    private OffsetDateTime approvedAt;
+
+    private String approvedBy;
+
+    private OffsetDateTime archivedAt;
+
+    private OffsetDateTime deletedAt;
+
+    @Schema(description = "Earliest time an authorized purge may be considered")
+    private OffsetDateTime purgeEligibleAt;
+
+    @Schema(description = "Timestamp when content was irreversibly purged and this response became a minimal tombstone")
+    private OffsetDateTime purgedAt;
+
+    @Schema(description = "Stable content-free reason exact document bytes are unavailable")
+    private String unavailableReason;
+
+    private boolean legalHold;
 
     @Schema(description = "Original filename for uploaded documents")
     private String originalFilename;
@@ -55,8 +116,8 @@ public class GeneratedDocumentResponse {
     private String createdBy;
 
     @Schema(description = "Timestamp when the document was created")
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
     @Schema(description = "Timestamp when the document was updated")
-    private LocalDateTime updatedAt;
+    private OffsetDateTime updatedAt;
 }

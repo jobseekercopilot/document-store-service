@@ -2,7 +2,10 @@ package com.jobseekercopilot.documentstore.repository;
 
 import com.jobseekercopilot.documentstore.entity.ExportedDocumentFile;
 import com.jobseekercopilot.documentstore.entity.FileType;
+import com.jobseekercopilot.documentstore.entity.ObjectStorageStatus;
+import java.time.LocalDateTime;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Optional;
@@ -11,9 +14,42 @@ import java.util.UUID;
 public interface ExportedDocumentFileRepository extends JpaRepository<ExportedDocumentFile, UUID> {
     List<ExportedDocumentFile> findByGeneratedDocumentIdOrderByCreatedAtDesc(UUID generatedDocumentId);
     List<ExportedDocumentFile> findByGeneratedDocumentIdIn(List<UUID> generatedDocumentIds);
+    long countByOwnerId(String ownerId);
+    List<ExportedDocumentFile> findByGeneratedDocumentIdInAndOwnerIdOrderByCreatedAtAsc(
+            List<UUID> generatedDocumentIds, String ownerId);
     void deleteByGeneratedDocumentIdIn(List<UUID> generatedDocumentIds);
-    List<ExportedDocumentFile> findByGeneratedDocumentIdAndActiveTrueOrderByUpdatedAtDesc(UUID generatedDocumentId);
-    List<ExportedDocumentFile> findByGeneratedDocumentIdAndFileTypeAndActiveTrue(UUID generatedDocumentId, FileType fileType);
+    Optional<ExportedDocumentFile> findByIdAndGeneratedDocument_UserId(UUID id, String userId);
+    Optional<ExportedDocumentFile> findByIdAndOwnerIdAndGeneratedDocument_UserId(
+            UUID id, String ownerId, String userId);
+    Optional<ExportedDocumentFile> findByIdAndGeneratedDocumentIdAndOwnerIdAndGeneratedDocument_UserId(
+            UUID id,
+            UUID generatedDocumentId,
+            String ownerId,
+            String userId);
+    Optional<ExportedDocumentFile> findByOwnerIdAndOperationKey(String ownerId, String operationKey);
+    List<ExportedDocumentFile> findByGeneratedDocumentIdAndGeneratedDocument_UserIdOrderByCreatedAtDesc(
+            UUID generatedDocumentId,
+            String userId);
+    List<ExportedDocumentFile> findByGeneratedDocumentIdAndGeneratedDocument_UserIdAndActiveTrueOrderByUpdatedAtDesc(
+            UUID generatedDocumentId,
+            String userId);
+    List<ExportedDocumentFile> findByGeneratedDocumentIdAndGeneratedDocument_UserIdAndFileTypeAndActiveTrue(
+            UUID generatedDocumentId,
+            String userId,
+            FileType fileType);
     Optional<ExportedDocumentFile> findFirstByGeneratedDocumentIdAndFileTypeAndActiveTrueOrderByUpdatedAtDesc(
             UUID generatedDocumentId, FileType fileType);
+    Optional<ExportedDocumentFile> findFirstByGeneratedDocumentIdAndFileTypeOrderByVersionDesc(
+            UUID generatedDocumentId, FileType fileType);
+    boolean existsByStorageKey(String storageKey);
+    List<ExportedDocumentFile> findByStorageStatusAndUpdatedAtBeforeOrderByStorageKeyAsc(
+            ObjectStorageStatus storageStatus,
+            LocalDateTime cutoff,
+            Pageable pageable);
+    List<ExportedDocumentFile>
+            findByStorageStatusAndUpdatedAtBeforeAndStorageKeyGreaterThanOrderByStorageKeyAsc(
+                    ObjectStorageStatus storageStatus,
+                    LocalDateTime cutoff,
+                    String afterKey,
+                    Pageable pageable);
 }

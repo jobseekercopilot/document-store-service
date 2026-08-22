@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobseekercopilot.documentstore.config.DocumentRetentionProperties;
 import com.jobseekercopilot.documentstore.dto.CreateDocumentRequest;
 import com.jobseekercopilot.documentstore.dto.PermanentErasureRequest;
+import com.jobseekercopilot.documentstore.dto.PermanentErasureStatus;
 import com.jobseekercopilot.documentstore.entity.ApplicationDocumentUpload;
 import com.jobseekercopilot.documentstore.entity.ApplicationDocumentUploadState;
 import com.jobseekercopilot.documentstore.entity.DocumentActivityEvent;
@@ -46,6 +47,7 @@ import com.jobseekercopilot.documentstore.repository.DocumentApplicationWorkflow
 import com.jobseekercopilot.documentstore.repository.DocumentCurrentCommandRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentLifecycleEventRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentOwnerErasureOperationRepository;
+import com.jobseekercopilot.documentstore.repository.DocumentOwnerErasureRestoreRequestRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentOwnerErasureScopeRepository;
 import com.jobseekercopilot.documentstore.repository.DocumentStorageOperationRepository;
 import com.jobseekercopilot.documentstore.repository.ExportedDocumentFileRepository;
@@ -54,16 +56,22 @@ import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.security.DocumentServiceIdentityFilter;
 import com.jobseekercopilot.documentstore.service.DocumentPermanentErasureService;
 import com.jobseekercopilot.documentstore.service.DocumentPermanentErasureTransaction;
+import com.jobseekercopilot.documentstore.service.PermanentErasureRecoveryJournalCodec;
 import com.jobseekercopilot.documentstore.service.GeneratedDocumentService;
 import com.jobseekercopilot.documentstore.service.ApplicationDocumentUploadPersistence;
 import com.jobseekercopilot.documentstore.exception.OperationConflictException;
 import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import com.jobseekercopilot.documentstore.storage.ObjectKeyFactory;
 import com.jobseekercopilot.documentstore.storage.ObjectStorageException;
+import com.jobseekercopilot.documentstore.storage.PermanentErasureJournal;
+import com.jobseekercopilot.documentstore.storage.PermanentErasureJournalKeys;
 import com.jobseekercopilot.documentstore.storage.ObjectIntegrity;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -71,12 +79,15 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest(properties = {
@@ -88,7 +99,9 @@ import org.springframework.test.web.servlet.MockMvc;
         "document-store.retention.backup-retention-policy-version=test-backups-1d-v1",
         "document-store.retention.erasure-fingerprint-key=test-owner-fingerprint-secret-key-0001",
         "document-store.retention.maximum-backup-retention-days=1",
-        "document-store.retention.permanent-erasure-fixed-delay-ms=86400000"
+        "document-store.retention.permanent-erasure-fixed-delay-ms=86400000",
+        "document-store.permanent-erasure-journal.provider=filesystem",
+        "document-store.permanent-erasure-journal.filesystem-root=target/test-permanent-erasure-journal"
 })
 @AutoConfigureMockMvc
 class DocumentPermanentErasureIntegrationTest {
@@ -102,6 +115,7 @@ class DocumentPermanentErasureIntegrationTest {
     @Autowired private ObjectMapper objectMapper;
     @Autowired private DocumentPermanentErasureService service;
     @Autowired private DocumentPermanentErasureTransaction erasureTransaction;
+    @Autowired private PermanentErasureRecoveryJournalCodec recoveryJournalCodec;
     @Autowired private DocumentRetentionProperties retentionProperties;
     @Autowired private GeneratedDocumentService generatedDocumentService;
     @Autowired private ApplicationDocumentUploadPersistence uploadPersistence;
@@ -114,13 +128,17 @@ class DocumentPermanentErasureIntegrationTest {
     @Autowired private DocumentCurrentCommandRepository currentCommandRepository;
     @Autowired private DocumentApplicationWorkflowCommandRepository workflowRepository;
     @Autowired private DocumentOwnerErasureOperationRepository erasureRepository;
+    @Autowired private DocumentOwnerErasureRestoreRequestRepository restoreRequestRepository;
     @Autowired private DocumentOwnerErasureScopeRepository scopeRepository;
+    @Autowired private JdbcTemplate jdbcTemplate;
 
     @MockBean private DocumentObjectStorage objectStorage;
+    @SpyBean private PermanentErasureJournal recoveryJournal;
 
     @BeforeEach
     @AfterEach
     void clean() {
+        restoreRequestRepository.deleteAll();
         scopeRepository.deleteAll();
         erasureRepository.deleteAll();
         fileRepository.deleteAll();
@@ -132,6 +150,7 @@ class DocumentPermanentErasureIntegrationTest {
         storageOperationRepository.deleteAll();
         documentRepository.deleteAll();
         reset(objectStorage);
+        reset(recoveryJournal);
     }
 
     @Test
@@ -152,11 +171,12 @@ class DocumentPermanentErasureIntegrationTest {
                                 "approvalReference", "privacy-approval-123"))))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.schemaVersion")
-                        .value("document-permanent-erasure.v1"))
+                        .value("document-permanent-erasure.v2"))
                 .andExpect(jsonPath("$.status")
                         .value("BACKUP_RETENTION_PENDING"))
                 .andExpect(jsonPath("$.documentCount").value(1))
                 .andExpect(jsonPath("$.objectScopeCount").value(2))
+                .andExpect(jsonPath("$.recoveryJournalEvidenceRecorded").value(true))
                 .andExpect(jsonPath("$.liveDataErased").value(true))
                 .andExpect(jsonPath("$.backupRetentionWindowElapsed").value(false))
                 .andExpect(jsonPath("$.backupExpiryEvidenceRecorded").value(false))
@@ -241,16 +261,72 @@ class DocumentPermanentErasureIntegrationTest {
         performErasure(operationId, owner)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
-        verify(objectStorage).permanentlyDeletePrefix(
-                "documents/" + owner.getId() + "/");
-        verify(objectStorage).permanentlyDeleteKey(
-                ObjectKeyFactory.forUploadQuarantine(uploadId(owner)));
+        verify(objectStorage, never()).permanentlyDeletePrefix(anyString());
+        verify(objectStorage, never()).permanentlyDeleteKey(anyString());
         mockMvc.perform(get("/internal/retention/v1/permanent-erasures/readiness")
                         .header(DocumentServiceIdentityFilter.SERVICE_HEADER,
                                 RETENTION_TOKEN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ready").value(true))
                 .andExpect(jsonPath("$.status").value("READY"));
+
+        retentionProperties.setErasureFingerprintKey(
+                "replacement-fingerprint-secret-key-0001");
+        retentionProperties.setErasureFingerprintPreviousKeys(
+                "test-owner-fingerprint-secret-key-0001");
+        try {
+            mockMvc.perform(get("/internal/retention/v1/permanent-erasures/readiness")
+                            .header(DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                    RETENTION_TOKEN))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.ready").value(true))
+                    .andExpect(jsonPath("$.status").value("READY"));
+            retentionProperties.setErasureFingerprintPreviousKeys("");
+            mockMvc.perform(get("/internal/retention/v1/permanent-erasures/readiness")
+                            .header(DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                    RETENTION_TOKEN))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.ready").value(false))
+                    .andExpect(jsonPath("$.status").value("MISCONFIGURED"));
+            mockMvc.perform(get(
+                                    "/internal/retention/v1/permanent-erasures/{operationId}",
+                                    operationId)
+                            .headers(retentionHeaders(OWNER)))
+                    .andExpect(status().isConflict());
+        } finally {
+            retentionProperties.setErasureFingerprintKey(
+                    "test-owner-fingerprint-secret-key-0001");
+            retentionProperties.setErasureFingerprintPreviousKeys("");
+        }
+    }
+
+    @Test
+    @ResourceLock("default-time-zone")
+    void recoveryJournalTimestampUsesUtcWhenProcessTimezoneDoesNot() {
+        TimeZone originalTimeZone = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Pacific/Auckland"));
+            Instant before = Instant.now().minusSeconds(1);
+            GeneratedDocument document = deletedDocument(OWNER);
+            UUID operationId = UUID.randomUUID();
+
+            erasureTransaction.prepare(
+                    OWNER,
+                    operationId,
+                    new PermanentErasureRequest(
+                            List.of(document.getId()),
+                            "privacy-approval-non-utc-process"),
+                    "document_retention_admin");
+
+            var record = erasureTransaction.recoveryJournalRecord(operationId);
+            Instant after = Instant.now().plusSeconds(1);
+            assertThat(record.createdAt().getOffset()).isEqualTo(ZoneOffset.UTC);
+            assertThat(record.createdAt().toInstant())
+                    .isAfterOrEqualTo(before)
+                    .isBeforeOrEqualTo(after);
+        } finally {
+            TimeZone.setDefault(originalTimeZone);
+        }
     }
 
     @Test
@@ -276,6 +352,299 @@ class DocumentPermanentErasureIntegrationTest {
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status")
                         .value("BACKUP_RETENTION_PENDING"));
+        assertOwnerDataErased(OWNER);
+    }
+
+    @Test
+    void journalFailureAndRestartRetryNeverEraseDataBeforeEvidenceIsBound()
+            throws Exception {
+        GeneratedDocument owner = deletedDocument(OWNER);
+        UUID operationId = UUID.randomUUID();
+        doThrow(new ObjectStorageException("synthetic ambiguous journal write"))
+                .when(recoveryJournal)
+                .writeOrVerify(any(UUID.class), any(byte[].class), anyString());
+
+        performErasure(operationId, owner)
+                .andExpect(status().isServiceUnavailable());
+
+        var pending = erasureRepository.findById(operationId).orElseThrow();
+        assertThat(pending.getState())
+                .isEqualTo(DocumentOwnerErasureState.JOURNAL_PENDING);
+        assertThat(pending.getJournalContentSha256()).isNull();
+        assertThat(documentRepository.findById(owner.getId())).isPresent();
+        verify(objectStorage, never()).permanentlyDeletePrefix(anyString());
+        mockMvc.perform(get("/internal/retention/v1/permanent-erasures/readiness")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                RETENTION_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ready").value(false))
+                .andExpect(jsonPath("$.recoveryJournalWritePending").value(1));
+
+        reset(recoveryJournal);
+        assertThat(service.reconcileBatch()).isEqualTo(1);
+        assertOwnerDataErased(OWNER);
+        assertThat(erasureRepository.findById(operationId).orElseThrow()
+                        .getJournalContentSha256())
+                .matches("[0-9a-f]{64}");
+    }
+
+    @Test
+    void crashAfterJournalWriteIsReconciledWithoutCreatingASecondRecord() {
+        GeneratedDocument owner = deletedDocument(OWNER);
+        UUID operationId = UUID.randomUUID();
+        PermanentErasureRequest request = new PermanentErasureRequest(
+                List.of(owner.getId()), "privacy-approval-crash-after-journal");
+        erasureTransaction.prepare(
+                OWNER, operationId, request, "document_retention_admin");
+        var encoded = recoveryJournalCodec.encode(
+                erasureTransaction.recoveryJournalRecord(operationId));
+        var firstEvidence = recoveryJournal.writeOrVerify(
+                operationId, encoded.content(), encoded.sha256());
+
+        assertThat(erasureRepository.findById(operationId).orElseThrow().getState())
+                .isEqualTo(DocumentOwnerErasureState.JOURNAL_PENDING);
+        assertThat(documentRepository.findById(owner.getId())).isPresent();
+
+        assertThat(service.reconcileBatch()).isEqualTo(1);
+
+        var reconciled = erasureRepository.findById(operationId).orElseThrow();
+        assertThat(reconciled.getJournalObjectVersion())
+                .isEqualTo(firstEvidence.objectVersion());
+        assertThat(reconciled.getState())
+                .isEqualTo(DocumentOwnerErasureState.BACKUP_RETENTION_PENDING);
+        assertOwnerDataErased(OWNER);
+    }
+
+    @Test
+    void immutableJournalContentMismatchFailsClosedBeforeObjectOrDatabaseErase()
+            throws Exception {
+        GeneratedDocument owner = deletedDocument(OWNER);
+        UUID operationId = UUID.randomUUID();
+        PermanentErasureRequest request = new PermanentErasureRequest(
+                List.of(owner.getId()), "privacy-approval-journal-collision");
+        erasureTransaction.prepare(
+                OWNER, operationId, request, "document_retention_admin");
+        byte[] conflicting = "{\"schemaVersion\":\"conflicting\"}"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        recoveryJournal.writeOrVerify(
+                operationId,
+                conflicting,
+                recoveryJournalCodec.sha256(conflicting));
+
+        assertThatThrownBy(() -> service.startOrResume(
+                        OWNER, operationId, request, "document_retention_admin"))
+                .isInstanceOf(ObjectStorageException.class)
+                .hasMessageContaining("collision");
+        assertThat(erasureRepository.findById(operationId).orElseThrow().getState())
+                .isEqualTo(DocumentOwnerErasureState.JOURNAL_PENDING);
+        assertThat(documentRepository.findById(owner.getId())).isPresent();
+        verify(objectStorage, never()).permanentlyDeletePrefix(anyString());
+    }
+
+    @Test
+    void restoreFailureIsDurableAndSuccessfulRetryRequiresFreshBackupEvidence()
+            throws Exception {
+        GeneratedDocument owner = deletedDocument(OWNER);
+        UUID operationId = UUID.randomUUID();
+        service.startOrResume(
+                OWNER,
+                operationId,
+                new PermanentErasureRequest(
+                        List.of(owner.getId()), "privacy-approval-restore-cycle"),
+                "document_retention_admin");
+        var originalPending = erasureRepository.findById(operationId).orElseThrow();
+        originalPending.setLiveDataErasedAt(LocalDateTime.now().minusDays(2));
+        originalPending.setBackupRetentionUntil(LocalDateTime.now().minusDays(1));
+        erasureRepository.saveAndFlush(originalPending);
+        performBackupExpiryAttestation(
+                        operationId, OWNER, "original-backup-expiry-evidence")
+                .andExpect(status().isOk());
+
+        documentRepository.saveAndFlush(owner);
+        clearInvocations(objectStorage);
+        UUID restoreReplayId = UUID.randomUUID();
+        doThrow(new ObjectStorageException("synthetic restore scope denial"))
+                .when(objectStorage)
+                .permanentlyDeletePrefix("documents/" + owner.getId() + "/");
+
+        performRestoreReplay(
+                        operationId,
+                        restoreReplayId,
+                        OWNER,
+                        "restore-runbook-incident-001")
+                .andExpect(status().isServiceUnavailable());
+
+        var restorePending = erasureRepository.findById(operationId).orElseThrow();
+        assertThat(restorePending.getState())
+                .isEqualTo(DocumentOwnerErasureState.RESTORE_REPLAY_PENDING);
+        assertThat(restorePending.getCompletedAt()).isNull();
+        assertThat(restorePending.getBackupExpiryEvidenceSha256()).isNull();
+        assertThat(documentRepository.findById(owner.getId())).isPresent();
+        mockMvc.perform(get("/internal/retention/v1/permanent-erasures/readiness")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                RETENTION_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.restoreReplayPending").value(1));
+
+        reset(objectStorage);
+        assertThat(service.reconcileBatch()).isEqualTo(1);
+        var freshBackup = erasureRepository.findById(operationId).orElseThrow();
+        assertThat(freshBackup.getState())
+                .isEqualTo(DocumentOwnerErasureState.BACKUP_RETENTION_PENDING);
+        assertThat(freshBackup.getRestoreReplayObjectErasedAt()).isNotNull();
+        assertThat(freshBackup.getBackupExpiryEvidenceSha256()).isNull();
+        assertThat(java.time.Duration.between(
+                        freshBackup.getLiveDataErasedAt(),
+                        freshBackup.getBackupRetentionUntil()))
+                .isEqualTo(java.time.Duration.ofDays(1));
+        assertOwnerDataErased(OWNER);
+
+        performBackupExpiryAttestation(
+                        operationId, OWNER, "fresh-backup-evidence-too-early")
+                .andExpect(status().isConflict());
+        freshBackup.setLiveDataErasedAt(LocalDateTime.now().minusDays(2));
+        freshBackup.setRestoreReplayRequestedAt(LocalDateTime.now().minusDays(3));
+        freshBackup.setRestoreReplayObjectErasedAt(
+                freshBackup.getLiveDataErasedAt());
+        freshBackup.setBackupRetentionUntil(LocalDateTime.now().minusDays(1));
+        erasureRepository.saveAndFlush(freshBackup);
+        performBackupExpiryAttestation(
+                        operationId, OWNER, "fresh-backup-expiry-evidence")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+
+        clearInvocations(objectStorage);
+        performRestoreReplay(
+                        operationId,
+                        restoreReplayId,
+                        OWNER,
+                        "restore-runbook-incident-001")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+        verify(objectStorage, never()).permanentlyDeletePrefix(anyString());
+        performRestoreReplay(
+                        operationId,
+                        restoreReplayId,
+                        OWNER,
+                        "different-restore-runbook-evidence")
+                .andExpect(status().isConflict());
+        performRestoreReplay(
+                        operationId,
+                        restoreReplayId,
+                        NEIGHBOUR,
+                        "restore-runbook-incident-001")
+                .andExpect(status().isNotFound());
+        mockMvc.perform(put(
+                                "/internal/retention/v1/permanent-erasures/{operationId}/restore-replays/{restoreReplayId}",
+                                operationId,
+                                UUID.randomUUID())
+                        .header(
+                                DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                "test-only-document-producer-token-32-bytes")
+                        .header(DocumentOwnerResolver.OWNER_HEADER, OWNER)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of(
+                                "evidenceReference", "restore-runbook"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void journalReadFailureLeavesDurableRestoreObligationForSchedulerRetry()
+            throws Exception {
+        GeneratedDocument owner = deletedDocument(OWNER);
+        UUID operationId = UUID.randomUUID();
+        service.startOrResume(
+                OWNER,
+                operationId,
+                new PermanentErasureRequest(
+                        List.of(owner.getId()), "privacy-approval-journal-read-retry"),
+                "document_retention_admin");
+        var originalPending = erasureRepository.findById(operationId).orElseThrow();
+        originalPending.setLiveDataErasedAt(LocalDateTime.now().minusDays(2));
+        originalPending.setBackupRetentionUntil(LocalDateTime.now().minusDays(1));
+        erasureRepository.saveAndFlush(originalPending);
+        performBackupExpiryAttestation(
+                        operationId, OWNER, "original-journal-read-backup-evidence")
+                .andExpect(status().isOk());
+
+        documentRepository.saveAndFlush(owner);
+        clearInvocations(objectStorage);
+        UUID restoreReplayId = UUID.randomUUID();
+        doThrow(new ObjectStorageException("synthetic recovery-journal read outage"))
+                .when(recoveryJournal)
+                .read(any(UUID.class), anyString());
+
+        performRestoreReplay(
+                        operationId,
+                        restoreReplayId,
+                        OWNER,
+                        "restore-runbook-journal-read-outage")
+                .andExpect(status().isServiceUnavailable());
+
+        assertThat(restoreRequestRepository.count()).isEqualTo(1);
+        assertThat(erasureRepository.findById(operationId).orElseThrow().getState())
+                .isEqualTo(DocumentOwnerErasureState.COMPLETED);
+        assertThat(documentRepository.findById(owner.getId())).isPresent();
+        verify(objectStorage, never()).permanentlyDeletePrefix(anyString());
+        mockMvc.perform(get("/internal/retention/v1/permanent-erasures/readiness")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                RETENTION_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ready").value(false))
+                .andExpect(jsonPath("$.status")
+                        .value("RECONCILIATION_REQUIRED"))
+                .andExpect(jsonPath("$.restoreJournalReadPending").value(1))
+                .andExpect(jsonPath("$.restoreReplayPending").value(0));
+        mockMvc.perform(get(
+                                "/internal/retention/v1/permanent-erasures/{operationId}",
+                                operationId)
+                        .headers(retentionHeaders(OWNER)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status")
+                        .value("RESTORE_JOURNAL_READ_PENDING"))
+                .andExpect(jsonPath("$.liveDataErased").value(false))
+                .andExpect(jsonPath("$.backupRetentionWindowElapsed").value(false))
+                .andExpect(jsonPath("$.backupExpiryEvidenceRecorded").value(false))
+                .andExpect(jsonPath("$.backupCopiesMayRemain").value(true))
+                .andExpect(jsonPath("$.liveDataErasedAt")
+                        .value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.backupRetentionUntil")
+                        .value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.completedAt")
+                        .value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.restoreReplayId")
+                        .value(restoreReplayId.toString()))
+                .andExpect(jsonPath("$.restoreReplayEvidenceRecorded").value(true))
+                .andExpect(jsonPath("$.restoreReplayRequestedAt").isNotEmpty())
+                .andExpect(jsonPath("$.restoreReplayObjectErasedAt")
+                        .value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString(OWNER))));
+
+        LocalDateTime staleAttempt = LocalDateTime.now(ZoneOffset.UTC).minusDays(2);
+        jdbcTemplate.update(
+                "UPDATE document_owner_erasure_restore_requests SET requested_at = ?, updated_at = ? WHERE restore_replay_id = ?",
+                staleAttempt,
+                staleAttempt,
+                restoreReplayId);
+        assertThat(service.reconcileBatch()).isZero();
+        assertThat(restoreRequestRepository.findById(restoreReplayId)
+                        .orElseThrow()
+                        .getUpdatedAt())
+                .isAfter(staleAttempt);
+        assertThat(documentRepository.findById(owner.getId())).isPresent();
+        verify(objectStorage, never()).permanentlyDeletePrefix(anyString());
+
+        reset(recoveryJournal);
+        assertThat(service.reconcileBatch()).isEqualTo(1);
+
+        assertThat(restoreRequestRepository.count()).isZero();
+        var freshBackup = erasureRepository.findById(operationId).orElseThrow();
+        assertThat(freshBackup.getState())
+                .isEqualTo(DocumentOwnerErasureState.BACKUP_RETENTION_PENDING);
+        assertThat(freshBackup.getRestoreReplayId()).isEqualTo(restoreReplayId);
+        assertThat(freshBackup.getRestoreReplayObjectErasedAt()).isNotNull();
+        assertThat(freshBackup.getBackupExpiryEvidenceSha256()).isNull();
         assertOwnerDataErased(OWNER);
     }
 
@@ -390,9 +759,9 @@ class DocumentPermanentErasureIntegrationTest {
         start.countDown();
 
         assertThat(first.get(10, TimeUnit.SECONDS).status())
-                .isEqualTo(DocumentOwnerErasureState.BACKUP_RETENTION_PENDING);
+                .isEqualTo(PermanentErasureStatus.BACKUP_RETENTION_PENDING);
         assertThat(second.get(10, TimeUnit.SECONDS).status())
-                .isEqualTo(DocumentOwnerErasureState.BACKUP_RETENTION_PENDING);
+                .isEqualTo(PermanentErasureStatus.BACKUP_RETENTION_PENDING);
         assertThat(erasureRepository.count()).isEqualTo(1);
         assertThat(scopeRepository.findByOperationIdOrderByStorageScopeAsc(operationId))
                 .hasSize(1);
@@ -434,8 +803,10 @@ class DocumentPermanentErasureIntegrationTest {
     }
 
     @Test
-    void operatorJournalReplayAfterPreErasureDatabaseRestoreErasesAgain() {
+    void externalJournalReplayAfterPreErasureDatabaseRestoreReconstructsAndErasesAgain()
+            throws Exception {
         GeneratedDocument owner = deletedDocument(OWNER);
+        GeneratedDocument neighbour = deletedDocument(NEIGHBOUR);
         UUID operationId = UUID.randomUUID();
         PermanentErasureRequest retainedRequest = new PermanentErasureRequest(
                 List.of(owner.getId()), "privacy-approval-restore-replay");
@@ -452,17 +823,158 @@ class DocumentPermanentErasureIntegrationTest {
         documentRepository.saveAndFlush(owner);
         reset(objectStorage);
 
-        service.startOrResume(
-                OWNER,
-                operationId,
-                retainedRequest,
-                "document_retention_admin");
+        performRestoreReplay(
+                        operationId,
+                        UUID.randomUUID(),
+                        NEIGHBOUR,
+                        "restore-runbook-wrong-owner")
+                .andExpect(status().isNotFound());
+        assertThat(restoreRequestRepository.count()).isZero();
+        assertThat(documentRepository.findById(owner.getId())).isPresent();
+        verify(objectStorage, never()).permanentlyDeletePrefix(anyString());
+
+        performRestoreReplay(
+                        operationId,
+                        UUID.randomUUID(),
+                        OWNER,
+                        "restore-runbook-pre-erasure-backup")
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status")
+                        .value("BACKUP_RETENTION_PENDING"))
+                .andExpect(jsonPath("$.restoreReplayEvidenceRecorded").value(true))
+                .andExpect(jsonPath("$.restoreReplayObjectErasedAt").isNotEmpty())
+                .andExpect(jsonPath("$.backupExpiryEvidenceRecorded").value(false));
 
         assertOwnerDataErased(OWNER);
+        assertThat(documentRepository.findById(neighbour.getId())).isPresent();
         assertThat(erasureRepository.findById(operationId)).isPresent();
         assertThat(scopeRepository.findByOperationIdOrderByStorageScopeAsc(operationId))
                 .extracting(scope -> scope.getStorageScope())
                 .containsExactly("documents/" + owner.getId() + "/");
+        verify(objectStorage).permanentlyDeletePrefix(
+                "documents/" + owner.getId() + "/");
+    }
+
+    @Test
+    void crashAfterDurableRestoreRequestIsSchedulerRecoveredFromOlderDatabaseState()
+            throws Exception {
+        GeneratedDocument owner = deletedDocument(OWNER);
+        GeneratedDocument neighbour = deletedDocument(NEIGHBOUR);
+        UUID operationId = UUID.randomUUID();
+        service.startOrResume(
+                OWNER,
+                operationId,
+                new PermanentErasureRequest(
+                        List.of(owner.getId()), "privacy-approval-crashed-restore"),
+                "document_retention_admin");
+
+        scopeRepository.deleteAll();
+        erasureRepository.deleteAll();
+        documentRepository.saveAndFlush(owner);
+        clearInvocations(objectStorage);
+        UUID restoreReplayId = UUID.randomUUID();
+
+        // Simulate a process stop after the durable request transaction commits,
+        // before the external recovery journal can be read.
+        erasureTransaction.prepareRestoreReplay(
+                OWNER,
+                operationId,
+                restoreReplayId,
+                "restore-runbook-crash-before-journal-read",
+                "document_retention_admin");
+
+        assertThat(restoreRequestRepository.count()).isEqualTo(1);
+        assertThat(erasureRepository.findById(operationId)).isEmpty();
+        assertThat(documentRepository.findById(owner.getId())).isPresent();
+        verify(objectStorage, never()).permanentlyDeletePrefix(anyString());
+
+        retentionProperties.setErasureFingerprintKey(
+                "replacement-fingerprint-secret-key-0001");
+        retentionProperties.setErasureFingerprintPreviousKeys("");
+        try {
+            mockMvc.perform(get("/internal/retention/v1/permanent-erasures/readiness")
+                            .header(DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                    RETENTION_TOKEN))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.ready").value(false))
+                    .andExpect(jsonPath("$.status").value("MISCONFIGURED"))
+                    .andExpect(jsonPath("$.restoreJournalReadPending").value(1));
+            assertThat(service.reconcileBatch()).isZero();
+            assertThat(restoreRequestRepository.count()).isEqualTo(1);
+            assertThat(documentRepository.findById(owner.getId())).isPresent();
+        } finally {
+            retentionProperties.setErasureFingerprintKey(
+                    "test-owner-fingerprint-secret-key-0001");
+            retentionProperties.setErasureFingerprintPreviousKeys("");
+        }
+
+        assertThat(service.reconcileBatch()).isEqualTo(1);
+
+        assertThat(restoreRequestRepository.count()).isZero();
+        var reconstructed = erasureRepository.findById(operationId).orElseThrow();
+        assertThat(reconstructed.getState())
+                .isEqualTo(DocumentOwnerErasureState.BACKUP_RETENTION_PENDING);
+        assertThat(reconstructed.getRestoreReplayId()).isEqualTo(restoreReplayId);
+        assertThat(reconstructed.getJournalContentSha256()).matches("[0-9a-f]{64}");
+        assertOwnerDataErased(OWNER);
+        assertThat(documentRepository.findById(neighbour.getId())).isPresent();
+        verify(objectStorage).permanentlyDeletePrefix(
+                "documents/" + owner.getId() + "/");
+    }
+
+    @Test
+    void externalJournalRepairsLegacyOperationBeforeAnyReconciliationCanResume()
+            throws Exception {
+        GeneratedDocument owner = deletedDocument(OWNER);
+        GeneratedDocument neighbour = deletedDocument(NEIGHBOUR);
+        UUID operationId = UUID.randomUUID();
+        service.startOrResume(
+                OWNER,
+                operationId,
+                new PermanentErasureRequest(
+                        List.of(owner.getId()), "privacy-approval-legacy-db-restore"),
+                "document_retention_admin");
+
+        var legacy = erasureRepository.findById(operationId).orElseThrow();
+        legacy.setJournalRequired(false);
+        legacy.setJournalSchemaVersion(null);
+        legacy.setJournalObjectKey(null);
+        legacy.setJournalObjectVersion(null);
+        legacy.setJournalContentSha256(null);
+        legacy.setJournalRecordedAt(null);
+        erasureRepository.saveAndFlush(legacy);
+        documentRepository.saveAndFlush(owner);
+        clearInvocations(objectStorage);
+
+        mockMvc.perform(get("/internal/retention/v1/permanent-erasures/readiness")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                RETENTION_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ready").value(false))
+                .andExpect(jsonPath("$.status")
+                        .value("RECONCILIATION_REQUIRED"))
+                .andExpect(jsonPath("$.recoveryJournalEvidenceMissing").value(1));
+        assertThat(service.reconcileBatch()).isZero();
+        verify(objectStorage, never()).permanentlyDeletePrefix(anyString());
+        assertThat(documentRepository.findById(owner.getId())).isPresent();
+
+        performRestoreReplay(
+                        operationId,
+                        UUID.randomUUID(),
+                        OWNER,
+                        "restore-runbook-legacy-operation")
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status")
+                        .value("BACKUP_RETENTION_PENDING"))
+                .andExpect(jsonPath("$.recoveryJournalEvidenceRecorded")
+                        .value(true));
+
+        var repaired = erasureRepository.findById(operationId).orElseThrow();
+        assertThat(repaired.isJournalRequired()).isTrue();
+        assertThat(repaired.getJournalContentSha256()).matches("[0-9a-f]{64}");
+        assertThat(repaired.getRestoreReplayObjectErasedAt()).isNotNull();
+        assertOwnerDataErased(OWNER);
+        assertThat(documentRepository.findById(neighbour.getId())).isPresent();
         verify(objectStorage).permanentlyDeletePrefix(
                 "documents/" + owner.getId() + "/");
     }
@@ -549,6 +1061,21 @@ class DocumentPermanentErasureIntegrationTest {
         return mockMvc.perform(put(
                                 "/internal/retention/v1/permanent-erasures/{operationId}/backup-expiry-attestation",
                                 operationId)
+                        .headers(retentionHeaders(owner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of(
+                                "evidenceReference", evidenceReference))));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions performRestoreReplay(
+            UUID operationId,
+            UUID restoreReplayId,
+            String owner,
+            String evidenceReference) throws Exception {
+        return mockMvc.perform(put(
+                                "/internal/retention/v1/permanent-erasures/{operationId}/restore-replays/{restoreReplayId}",
+                                operationId,
+                                restoreReplayId)
                         .headers(retentionHeaders(owner))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsBytes(Map.of(

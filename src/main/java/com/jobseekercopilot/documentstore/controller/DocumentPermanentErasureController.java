@@ -4,11 +4,15 @@ import com.jobseekercopilot.documentstore.dto.BackupExpiryAttestationRequest;
 import com.jobseekercopilot.documentstore.dto.PermanentErasureReadinessResponse;
 import com.jobseekercopilot.documentstore.dto.PermanentErasureRequest;
 import com.jobseekercopilot.documentstore.dto.PermanentErasureResponse;
-import com.jobseekercopilot.documentstore.entity.DocumentOwnerErasureState;
+import com.jobseekercopilot.documentstore.dto.PermanentErasureStatus;
+import com.jobseekercopilot.documentstore.dto.RestoreReplayRequest;
+import com.jobseekercopilot.documentstore.exception.ErrorResponse;
 import com.jobseekercopilot.documentstore.security.DocumentOwnerResolver;
 import com.jobseekercopilot.documentstore.service.DocumentPermanentErasureService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -50,10 +54,22 @@ public class DocumentPermanentErasureController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Backup retention completed"),
             @ApiResponse(responseCode = "202", description = "Live erasure completed or reconciliation remains pending"),
-            @ApiResponse(responseCode = "400", description = "Malformed or duplicate exact scope"),
-            @ApiResponse(responseCode = "403", description = "Retention administrator authority is required"),
-            @ApiResponse(responseCode = "409", description = "Policy, recovery, legal hold or exact-scope guard blocked erasure"),
-            @ApiResponse(responseCode = "503", description = "Object erasure could not be proven and remains retryable")
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Malformed or duplicate exact scope",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "403",
+                    description = "Retention administrator authority is required",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "409",
+                    description = "Policy, recovery, legal hold or exact-scope guard blocked erasure",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "503",
+                    description = "Object erasure could not be proven and remains retryable",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     public ResponseEntity<PermanentErasureResponse> erase(
             @PathVariable UUID operationId,
@@ -63,7 +79,7 @@ public class DocumentPermanentErasureController {
         String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
         PermanentErasureResponse response = service.startOrResume(
                 ownerId, operationId, request, authentication.getName());
-        return response.status() == DocumentOwnerErasureState.COMPLETED
+        return response.status() == PermanentErasureStatus.COMPLETED
                 ? ResponseEntity.ok(response)
                 : ResponseEntity.accepted().body(response);
     }
@@ -75,10 +91,26 @@ public class DocumentPermanentErasureController {
     @SecurityRequirement(name = "serviceToken")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Backup expiry evidence recorded and permanent erasure completed"),
-            @ApiResponse(responseCode = "403", description = "Retention administrator authority is required"),
-            @ApiResponse(responseCode = "404", description = "Owner-scoped operation was not found"),
-            @ApiResponse(responseCode = "409", description = "Window, policy or live-erasure prerequisite not satisfied"),
-            @ApiResponse(responseCode = "503", description = "Final object-version verification failed and remains retryable")
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Malformed backup-expiry evidence",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "403",
+                    description = "Retention administrator authority is required",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Owner-scoped operation was not found",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "409",
+                    description = "Window, policy or live-erasure prerequisite not satisfied",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "503",
+                    description = "Final object-version verification failed and remains retryable",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     public ResponseEntity<PermanentErasureResponse> attestBackupExpiry(
             @PathVariable UUID operationId,
@@ -93,11 +125,73 @@ public class DocumentPermanentErasureController {
                 authentication.getName()));
     }
 
+    @PutMapping("/{operationId}/restore-replays/{restoreReplayId}")
+    @Operation(
+            summary = "Replay an immutable permanent-erasure recovery journal after restore",
+            description = "Retention-administrator-only restore saga; loads the server-owned immutable journal, durably records the replay obligation, then re-erases exact restored scopes")
+    @SecurityRequirement(name = "serviceToken")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Restore replay and fresh backup retention completed"),
+            @ApiResponse(responseCode = "202", description = "Restore replay or fresh backup retention remains pending"),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Malformed restore-replay request",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "403",
+                    description = "Retention administrator authority is required",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Owner-scoped retained operation was not found",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "409",
+                    description = "Journal, owner, replay, scope or policy evidence conflicts",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "503",
+                    description = "Immutable journal or exact object erasure remains retryable",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    public ResponseEntity<PermanentErasureResponse> restoreReplay(
+            @PathVariable UUID operationId,
+            @PathVariable UUID restoreReplayId,
+            @Valid @RequestBody RestoreReplayRequest request,
+            @RequestHeader(DocumentOwnerResolver.OWNER_HEADER) String requestedOwner,
+            @Parameter(hidden = true) Authentication authentication) {
+        String ownerId = ownerResolver.resolve(authentication, requestedOwner, null);
+        PermanentErasureResponse response = service.restoreReplay(
+                ownerId,
+                operationId,
+                restoreReplayId,
+                request,
+                authentication.getName());
+        return response.status() == PermanentErasureStatus.COMPLETED
+                ? ResponseEntity.ok(response)
+                : ResponseEntity.accepted().body(response);
+    }
+
     @GetMapping("/{operationId}")
     @Operation(
             summary = "Read exact owner permanent-erasure status",
             description = "Owner-bound status; no raw owner, document, object or approval identifiers are returned")
     @SecurityRequirement(name = "serviceToken")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Owner-scoped permanent-erasure status"),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Malformed operation identifier or owner context",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "403",
+                    description = "Retention administrator authority is required",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Owner-scoped operation was not found",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     public ResponseEntity<PermanentErasureResponse> status(
             @PathVariable UUID operationId,
             @RequestHeader(DocumentOwnerResolver.OWNER_HEADER) String requestedOwner,

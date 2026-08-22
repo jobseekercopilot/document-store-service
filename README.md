@@ -53,7 +53,7 @@ remain required.
 ## API contract
 
 [`contracts/openapi.json`](contracts/openapi.json) is the executable OpenAPI
-4.2.0 contract. It includes content-free paged family summaries, newest-first
+4.3.0 contract. It includes content-free paged family summaries, newest-first
 server-numbered history, safe exact-artifact manifests and a concurrency- and
 idempotency-protected explicit current-pointer command. Approval and current
 selection are independent. Exact retained artifacts can be downloaded through
@@ -102,6 +102,16 @@ stable write fence and retained exact scopes make restore replay fail closed.
 Production is disabled until the separate Infrastructure capability is pinned.
 See
 [`docs/ACCOUNT_PERMANENT_ERASURE.md`](docs/ACCOUNT_PERMANENT_ERASURE.md).
+
+Version 4.3.0 makes that erasure flow recoverable after an older database
+restore without weakening its delete ordering. Before any object or database
+erase, the service durably enters `JOURNAL_PENDING`, conditionally writes and
+verifies a canonical recovery record in a separate immutable SSE-KMS S3
+bucket, and binds the exact object version and digest in PostgreSQL. A
+retention-administrator-only restore-replay command consumes that record,
+re-erases only its exact scopes and starts a fresh backup-retention horizon.
+The owner-fingerprint write fence supports a bounded primary/previous key ring;
+removing a key while its verifier remains retained fails closed.
 
 The identity sources, least-privilege service roles, authorization matrix,
 stable denial rules and deployment dependencies are defined in

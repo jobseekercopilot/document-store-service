@@ -17,11 +17,20 @@ import org.springframework.data.repository.query.Param;
 public interface DocumentOwnerErasureOperationRepository
         extends JpaRepository<DocumentOwnerErasureOperation, UUID> {
 
-    Optional<DocumentOwnerErasureOperation> findByOwnerFingerprint(String ownerFingerprint);
+    Optional<DocumentOwnerErasureOperation> findByOwnerFingerprintIn(
+            Collection<String> ownerFingerprints);
 
-    boolean existsByOwnerFingerprint(String ownerFingerprint);
+    boolean existsByOwnerFingerprintIn(Collection<String> ownerFingerprints);
 
-    boolean existsByFingerprintKeyVerifierNot(String fingerprintKeyVerifier);
+    @Query("select distinct operation.fingerprintKeyVerifier "
+            + "from DocumentOwnerErasureOperation operation")
+    List<String> findDistinctFingerprintKeyVerifiers();
+
+    @Query("select count(operation) from DocumentOwnerErasureOperation operation "
+            + "where operation.state <> com.jobseekercopilot.documentstore.entity.DocumentOwnerErasureState.JOURNAL_PENDING "
+            + "and (operation.journalRequired = false "
+            + "or operation.journalContentSha256 is null)")
+    long countAdvancedOperationsWithoutJournalEvidence();
 
     long countByStateIn(Collection<DocumentOwnerErasureState> states);
 

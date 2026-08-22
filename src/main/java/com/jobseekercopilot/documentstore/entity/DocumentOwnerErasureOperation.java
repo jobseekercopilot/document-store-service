@@ -9,6 +9,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -67,6 +68,39 @@ public class DocumentOwnerErasureOperation {
     @Column(name = "backup_retention_days", nullable = false, updatable = false)
     private int backupRetentionDays;
 
+    @Column(name = "journal_required", nullable = false)
+    private boolean journalRequired;
+
+    @Column(name = "journal_schema_version", length = 80)
+    private String journalSchemaVersion;
+
+    @Column(name = "journal_object_key", length = 512)
+    private String journalObjectKey;
+
+    @Column(name = "journal_object_version", length = 256)
+    private String journalObjectVersion;
+
+    @Column(name = "journal_content_sha256", length = 64)
+    private String journalContentSha256;
+
+    @Column(name = "journal_recorded_at")
+    private LocalDateTime journalRecordedAt;
+
+    @Column(name = "restore_replay_id")
+    private UUID restoreReplayId;
+
+    @Column(name = "restore_replay_evidence_sha256", length = 64)
+    private String restoreReplayEvidenceSha256;
+
+    @Column(name = "restore_replay_requested_by", length = 64)
+    private String restoreReplayRequestedBy;
+
+    @Column(name = "restore_replay_requested_at")
+    private LocalDateTime restoreReplayRequestedAt;
+
+    @Column(name = "restore_replay_object_erased_at")
+    private LocalDateTime restoreReplayObjectErasedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -96,7 +130,7 @@ public class DocumentOwnerErasureOperation {
 
     @PrePersist
     void onCreate() {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         if (operationId == null) {
             operationId = UUID.randomUUID();
         }
@@ -107,12 +141,12 @@ public class DocumentOwnerErasureOperation {
             updatedAt = now;
         }
         if (state == null) {
-            state = DocumentOwnerErasureState.OBJECT_ERASURE_PENDING;
+            state = DocumentOwnerErasureState.JOURNAL_PENDING;
         }
     }
 
     @PreUpdate
     void onUpdate() {
-        updatedAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now(ZoneOffset.UTC);
     }
 }

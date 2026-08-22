@@ -66,7 +66,7 @@ class PostgresStorageRecoveryIntegrationTest {
         // The bytes remain recoverable as LEGACY_DATABASE until the startup
         // migrator has durably copied and verified the external object.
         Flyway flyway = flyway(POSTGRES.getJdbcUrl());
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(12);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(13);
         flyway.validate();
         UUID erasureOperationId = UUID.randomUUID();
         try (Connection connection = primaryConnection()) {
@@ -137,8 +137,11 @@ class PostgresStorageRecoveryIntegrationTest {
                     operator_id, state, document_count,
                     object_scope_count, attempt_count, policy_version,
                     backup_retention_policy_version, backup_retention_days,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, journal_required,
+                    journal_schema_version, journal_object_key,
+                    journal_object_version, journal_content_sha256,
+                    journal_recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """);
                 PreparedStatement scope = connection.prepareStatement("""
                 INSERT INTO document_owner_erasure_scopes (
@@ -161,6 +164,12 @@ class PostgresStorageRecoveryIntegrationTest {
             operation.setInt(14, 35);
             operation.setObject(15, now);
             operation.setObject(16, now);
+            operation.setBoolean(17, true);
+            operation.setString(18, "document-permanent-erasure-journal.v1");
+            operation.setString(19, "permanent-erasures/v1/" + operationId + ".json");
+            operation.setString(20, "synthetic-object-version");
+            operation.setString(21, "e".repeat(64));
+            operation.setObject(22, now);
             assertThat(operation.executeUpdate()).isEqualTo(1);
 
             scope.setObject(1, UUID.randomUUID());
@@ -178,7 +187,15 @@ class PostgresStorageRecoveryIntegrationTest {
             UUID documentId) throws SQLException {
         assertThat(count(
                         connection,
-                        "SELECT COUNT(*) FROM document_owner_erasure_operations WHERE operation_id = ? AND state = 'OBJECT_ERASURE_PENDING'",
+                        """
+                        SELECT COUNT(*)
+                        FROM document_owner_erasure_operations
+                        WHERE operation_id = ?
+                          AND state = 'OBJECT_ERASURE_PENDING'
+                          AND journal_required = TRUE
+                          AND journal_schema_version = 'document-permanent-erasure-journal.v1'
+                          AND journal_content_sha256 = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+                        """,
                         operationId))
                 .isEqualTo(1);
         assertThat(count(

@@ -166,13 +166,17 @@ The guarded recovery process is in
   association capture and terminal hash/evidence scrubbing.
 - Infrastructure injects and rotates a distinct administrator credential.
 - Infrastructure pins the independent permanent-erasure capability, grants
-  exact-prefix version enumeration/deletion, and retains the fingerprint key
-  through the audit/write-guard lifetime.
+  exact-prefix live-object version enumeration/deletion, provisions the
+  separate immutable recovery journal, and retains the complete fingerprint
+  key ring through the audit/write-guard lifetime.
 - Infrastructure pins the exact backup-retention maximum and policy version;
   a retention administrator records hashed expiry evidence only after the
   snapshotted window ends.
 - PostgreSQL, S3 object versions, backups, logs and exported reports have
   compatible expiry and restore handling.
+- A database-restore exercise proves the retention-admin replay reconstructs
+  missing or legacy journal state, preserves neighbouring owners, re-erases
+  exact scopes and requires fresh backup-expiry evidence.
 - Cross-user archive, restore, delete and purge denial pass in integrated E2E.
 - A synthetic production-like recovery/purge exercise proves that no content
   appears in logs or evidence.

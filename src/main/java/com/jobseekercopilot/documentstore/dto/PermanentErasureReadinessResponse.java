@@ -22,7 +22,15 @@ public record PermanentErasureReadinessResponse(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         boolean backupExpiryEvidenceRequired,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
+        long recoveryJournalWritePending,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
+        long recoveryJournalEvidenceMissing,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         long liveErasureReconciliationPending,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
+        long restoreJournalReadPending,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
+        long restoreReplayPending,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         long backupRetentionPending) {
 }

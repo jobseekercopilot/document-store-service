@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
+import lombok.ToString;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
@@ -58,7 +59,12 @@ public class DocumentRetentionProperties {
     private String backupRetentionPolicyVersion = "UNAPPROVED";
 
     @Size(max = 512)
+    @ToString.Exclude
     private String erasureFingerprintKey = "";
+
+    @Size(max = 4103)
+    @ToString.Exclude
+    private String erasureFingerprintPreviousKeys = "";
 
     public void requireApprovedPurgePolicy() {
         if (!purgeEnabled || !hasApprovedPolicy()) {
@@ -81,10 +87,7 @@ public class DocumentRetentionProperties {
                 || !versionedObjectErasureEnabled
                 || !hasApprovedPolicy()
                 || !hasApprovedBackupRetentionPolicy()
-                || erasureFingerprintKey == null
-                || erasureFingerprintKey.length() < 32
-                || erasureFingerprintKey.chars()
-                        .anyMatch(value -> Character.isISOControl(value))) {
+                || !isBase64UrlSecret(erasureFingerprintKey)) {
             throw new IllegalStateException(
                     "Permanent account erasure is disabled until the approved retention, backup, object-version and fingerprint controls are configured.");
         }
@@ -101,5 +104,12 @@ public class DocumentRetentionProperties {
                 && !backupRetentionPolicyVersion.isBlank()
                 && !"UNAPPROVED".equalsIgnoreCase(
                         backupRetentionPolicyVersion.trim());
+    }
+
+    private boolean isBase64UrlSecret(String value) {
+        return value != null
+                && value.length() >= 32
+                && value.length() <= 512
+                && value.matches("[A-Za-z0-9_-]+");
     }
 }

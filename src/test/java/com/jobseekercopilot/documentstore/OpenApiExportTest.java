@@ -57,11 +57,15 @@ class OpenApiExportTest {
                 .getContentAsString();
         var generated = objectMapper.readTree(specification);
 
-        assertEquals("4.2.0", generated.at("/info/version").asText());
+        assertEquals("4.3.0", generated.at("/info/version").asText());
         var permanentErasure = generated.at(
                 "/paths/~1internal~1retention~1v1~1permanent-erasures~1{operationId}/put");
         assertTrue(permanentErasure.isObject());
         assertTrue(permanentErasure.at("/security/0/serviceToken").isArray());
+        for (String responseCode : new String[] {"400", "403", "409", "503"}) {
+            assertTrue(permanentErasure.path("responses").path(responseCode).toString()
+                    .contains("#/components/schemas/ErrorResponse"));
+        }
         assertTrue(generated.at(
                 "/paths/~1internal~1retention~1v1~1permanent-erasures~1readiness/get")
                 .isObject());
@@ -69,27 +73,72 @@ class OpenApiExportTest {
                 "/paths/~1internal~1retention~1v1~1permanent-erasures~1{operationId}~1backup-expiry-attestation/put");
         assertTrue(backupAttestation.isObject());
         assertTrue(backupAttestation.at("/security/0/serviceToken").isArray());
+        for (String responseCode : new String[] {"400", "403", "404", "409", "503"}) {
+            assertTrue(backupAttestation.path("responses").path(responseCode).toString()
+                    .contains("#/components/schemas/ErrorResponse"));
+        }
+        var restoreReplay = generated.at(
+                "/paths/~1internal~1retention~1v1~1permanent-erasures~1{operationId}~1restore-replays~1{restoreReplayId}/put");
+        assertTrue(restoreReplay.isObject());
+        assertTrue(restoreReplay.at("/security/0/serviceToken").isArray());
+        assertTrue(restoreReplay.path("responses").has("200"));
+        assertTrue(restoreReplay.path("responses").has("202"));
+        for (String responseCode : new String[] {"400", "403", "404", "409", "503"}) {
+            assertTrue(restoreReplay.path("responses").path(responseCode).toString()
+                    .contains("#/components/schemas/ErrorResponse"));
+        }
+        var erasureStatus = generated.at(
+                "/paths/~1internal~1retention~1v1~1permanent-erasures~1{operationId}/get");
+        for (String responseCode : new String[] {"400", "403", "404"}) {
+            assertTrue(erasureStatus.path("responses").path(responseCode).toString()
+                    .contains("#/components/schemas/ErrorResponse"));
+        }
         assertTrue(generated.at(
                         "/components/schemas/BackupExpiryAttestationRequest/required")
                 .toString()
                 .contains("\"evidenceReference\""));
+        assertTrue(generated.at(
+                        "/components/schemas/RestoreReplayRequest/required")
+                .toString()
+                .contains("\"evidenceReference\""));
+        assertEquals(
+                1,
+                generated.at(
+                                "/components/schemas/RestoreReplayRequest/properties/evidenceReference/minLength")
+                        .asInt());
         var erasureRequest = generated.at(
                 "/components/schemas/PermanentErasureRequest");
         assertTrue(erasureRequest.path("required").toString()
                 .contains("\"documentIds\""));
         assertTrue(erasureRequest.path("required").toString()
                 .contains("\"approvalReference\""));
+        assertTrue(erasureRequest.at("/properties/documentIds/uniqueItems").asBoolean());
+        assertEquals(0, erasureRequest.at("/properties/documentIds/minItems").asInt());
+        assertEquals(2000, erasureRequest.at("/properties/documentIds/maxItems").asInt());
+        assertEquals(
+                1,
+                erasureRequest.at("/properties/approvalReference/minLength").asInt());
+        assertEquals(
+                1,
+                generated.at(
+                                "/components/schemas/BackupExpiryAttestationRequest/properties/evidenceReference/minLength")
+                        .asInt());
         var erasureResponse = generated.at(
                 "/components/schemas/PermanentErasureResponse/properties");
         for (String property : new String[] {
                 "operationId",
                 "status",
+                "recoveryJournalEvidenceRecorded",
                 "liveDataErased",
                 "backupRetentionWindowElapsed",
                 "backupExpiryEvidenceRecorded",
                 "backupCopiesMayRemain",
                 "backupRetentionUntil",
                 "completedAt",
+                "restoreReplayId",
+                "restoreReplayEvidenceRecorded",
+                "restoreReplayRequestedAt",
+                "restoreReplayObjectErasedAt",
                 "policyVersion",
                 "backupRetentionPolicyVersion",
                 "backupRetentionDays"
@@ -100,6 +149,10 @@ class OpenApiExportTest {
         assertFalse(erasureResponse.has("documentIds"));
         assertFalse(erasureResponse.has("approvalReference"));
         assertFalse(erasureResponse.has("evidenceReference"));
+        assertFalse(erasureResponse.has("ownerFingerprint"));
+        assertFalse(erasureResponse.has("journalObjectKey"));
+        assertFalse(erasureResponse.has("journalObjectVersion"));
+        assertFalse(erasureResponse.has("journalContentSha256"));
         assertEquals(
                 erasureResponse.size(),
                 generated.at("/components/schemas/PermanentErasureResponse/required")
@@ -119,6 +172,28 @@ class OpenApiExportTest {
                     .at("/properties/status/enum")
                     .toString()
                     .contains("\"" + status + "\""));
+        }
+        for (String property : new String[] {
+                "recoveryJournalWritePending",
+                "recoveryJournalEvidenceMissing",
+                "liveErasureReconciliationPending",
+                "restoreJournalReadPending",
+                "restoreReplayPending",
+                "backupRetentionPending"
+        }) {
+            assertTrue(readinessSchema.path("properties").has(property));
+        }
+        var erasureStates = generated.at(
+                "/components/schemas/PermanentErasureResponse/properties/status/enum");
+        for (String state : new String[] {
+                "JOURNAL_PENDING",
+                "OBJECT_ERASURE_PENDING",
+                "RESTORE_JOURNAL_READ_PENDING",
+                "RESTORE_REPLAY_PENDING",
+                "BACKUP_RETENTION_PENDING",
+                "COMPLETED"
+        }) {
+            assertTrue(erasureStates.toString().contains("\"" + state + "\""));
         }
         var upload = generated.at(
                 "/paths/~1api~1v1~1applications~1{applicationId}~1documents~1{documentType}~1uploads/post");

@@ -1,6 +1,5 @@
 package com.jobseekercopilot.documentstore.dto;
 
-import com.jobseekercopilot.documentstore.entity.DocumentOwnerErasureState;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -11,13 +10,15 @@ public record PermanentErasureResponse(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         UUID operationId,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
-        DocumentOwnerErasureState status,
+        PermanentErasureStatus status,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         int documentCount,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         int objectScopeCount,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         int attemptCount,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
+        boolean recoveryJournalEvidenceRecorded,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         boolean liveDataErased,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
@@ -32,6 +33,14 @@ public record PermanentErasureResponse(
         OffsetDateTime backupRetentionUntil,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, nullable = true)
         OffsetDateTime completedAt,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED, nullable = true)
+        UUID restoreReplayId,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
+        boolean restoreReplayEvidenceRecorded,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED, nullable = true)
+        OffsetDateTime restoreReplayRequestedAt,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED, nullable = true)
+        OffsetDateTime restoreReplayObjectErasedAt,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         String policyVersion,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)

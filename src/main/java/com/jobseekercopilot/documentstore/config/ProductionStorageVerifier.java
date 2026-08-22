@@ -1,6 +1,8 @@
 package com.jobseekercopilot.documentstore.config;
 
 import java.util.Locale;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.flywaydb.core.Flyway;
@@ -122,6 +124,7 @@ public class ProductionStorageVerifier implements ApplicationRunner, FlywayMigra
         if (!permanentErasureEnabled) {
             if (writeFenceEnabled) {
                 verifyPermanentErasureWriteFence();
+                verifyPermanentErasureJournal();
             }
             return;
         }
@@ -153,12 +156,14 @@ public class ProductionStorageVerifier implements ApplicationRunner, FlywayMigra
                     "Permanent erasure requires task-role S3 credentials");
         }
         verifyPermanentErasureWriteFence();
+        verifyPermanentErasureJournal();
         String retentionAdminToken = required(
                 "document-store.security.service-identity.retention-admin-token");
         requireStrongSecret(retentionAdminToken, "retention administrator token");
         String fingerprintKey = required(
                 "document-store.retention.erasure-fingerprint-key");
-        if (retentionAdminToken.equals(fingerprintKey)) {
+        Set<String> fingerprintKeys = fingerprintKeys(fingerprintKey);
+        if (fingerprintKeys.contains(retentionAdminToken)) {
             throw new IllegalStateException(
                     "Permanent-erasure fingerprint and administrator credentials must be distinct");
         }
@@ -175,7 +180,97 @@ public class ProductionStorageVerifier implements ApplicationRunner, FlywayMigra
     private void verifyPermanentErasureWriteFence() {
         String fingerprintKey = required(
                 "document-store.retention.erasure-fingerprint-key");
-        requireStrongSecret(fingerprintKey, "erasure fingerprint key");
+        fingerprintKeys(fingerprintKey);
+    }
+
+    private Set<String> fingerprintKeys(String primary) {
+        requireBase64UrlSecret(primary, "primary erasure fingerprint key");
+        LinkedHashSet<String> keys = new LinkedHashSet<>();
+        keys.add(primary);
+        String previous = environment.getProperty(
+                "document-store.retention.erasure-fingerprint-previous-keys", "");
+        if (!previous.isEmpty()) {
+            String[] values = previous.split(",", -1);
+            if (values.length > 8) {
+                throw new IllegalStateException(
+                        "Permanent-erasure fingerprint rotation supports at most eight previous keys");
+            }
+            for (String value : values) {
+                requireBase64UrlSecret(value, "previous erasure fingerprint key");
+                if (!keys.add(value)) {
+                    throw new IllegalStateException(
+                            "Permanent-erasure fingerprint keys must be distinct");
+                }
+            }
+        }
+        return Set.copyOf(keys);
+    }
+
+    private void verifyPermanentErasureJournal() {
+        if (!"s3".equalsIgnoreCase(required(
+                "document-store.permanent-erasure-journal.provider"))) {
+            throw new IllegalStateException(
+                    "Permanent erasure requires the immutable S3 recovery journal");
+        }
+        requireTrue(
+                "document-store.permanent-erasure-journal.object-lock-enabled",
+                "Permanent-erasure recovery journal Object Lock must be declared");
+        String retentionPolicyVersion = required(
+                "document-store.permanent-erasure-journal.retention-policy-version");
+        if (!PermanentErasureJournalProperties.isReviewedRetentionPolicyVersion(
+                retentionPolicyVersion)) {
+            throw new IllegalStateException(
+                    "Permanent-erasure recovery journal requires a reviewed 1-128 character retention-policy version");
+        }
+        String journalRegion = required(
+                "document-store.permanent-erasure-journal.s3.region");
+        String journalBucket = required(
+                "document-store.permanent-erasure-journal.s3.bucket");
+        if (journalBucket.equals(required("document-store.object-storage.s3.bucket"))) {
+            throw new IllegalStateException(
+                    "Permanent-erasure recovery journal must use an isolated bucket");
+        }
+        String journalKmsKey = required(
+                "document-store.permanent-erasure-journal.s3.kms-key-id");
+        if (journalKmsKey.equals(required(
+                "document-store.object-storage.s3.kms-key-id"))) {
+            throw new IllegalStateException(
+                    "Permanent-erasure recovery journal must use an isolated KMS key");
+        }
+        if (!journalKmsKey.matches(
+                "arn:aws:kms:" + Pattern.quote(journalRegion)
+                        + ":[0-9]{12}:key/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}"
+                        + "-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")) {
+            throw new IllegalStateException(
+                    "Permanent-erasure recovery journal requires the exact regional KMS key ARN");
+        }
+        if (!"task-role".equalsIgnoreCase(required(
+                "document-store.permanent-erasure-journal.s3.credentials-provider"))) {
+            throw new IllegalStateException(
+                    "Permanent-erasure recovery journal requires task-role credentials");
+        }
+        if (!environment.getProperty(
+                        "document-store.permanent-erasure-journal.s3.endpoint", "")
+                .isBlank()
+                || !environment.getProperty(
+                                "document-store.permanent-erasure-journal.s3.access-key", "")
+                        .isBlank()
+                || !environment.getProperty(
+                                "document-store.permanent-erasure-journal.s3.secret-key", "")
+                        .isBlank()) {
+            throw new IllegalStateException(
+                    "Permanent-erasure recovery journal task-role mode forbids endpoints and static credentials");
+        }
+    }
+
+    private void requireBase64UrlSecret(String value, String name) {
+        if (value.length() < 32
+                || value.length() > 512
+                || !value.matches("[A-Za-z0-9_-]+")) {
+            throw new IllegalStateException(
+                    "Permanent-erasure " + name
+                            + " must be 32-512 base64url-safe characters");
+        }
     }
 
     private void requireStrongSecret(String value, String name) {

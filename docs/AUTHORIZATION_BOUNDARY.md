@@ -69,7 +69,7 @@ missing document/file UUIDs return the same stable `404` message.
 | `DOCUMENT_STORE_JWT_AUDIENCE` | Document Store access-token verification |
 | `DOCUMENT_STORE_PRODUCER_TOKEN` | CV/Cover Letter, Document Export and approved orchestration consumers |
 | `DOCUMENT_STORE_READER_TOKEN` | Approved read-only backend consumers |
-| `DOCUMENT_STORE_RETENTION_ADMIN_TOKEN` | Privacy/legal support automation for hold and guarded purge only |
+| `DOCUMENT_STORE_RETENTION_ADMIN_TOKEN` | Privacy/legal support automation for hold, guarded erasure, backup attestation and restore replay only |
 | `ENVIRONMENT_DATA_TOKEN` | Isolated non-production fixture controller |
 
 Infrastructure owns injection and rotation. Values must not appear in Git,

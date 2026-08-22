@@ -27,3 +27,14 @@ paths = [
 regexes = [
   '''"Idempotency-Key",\s*"[a-z]+-[a-z]+-[0-9]{3}-[a-z]{2}"'''
 ]
+
+[[rules.allowlists]]
+description = "Bounded erasure-fingerprint example value is documentation, not a credential"
+condition = "AND"
+regexTarget = "match"
+paths = [
+  '''^\.env\.example$'''
+]
+regexes = [
+  '''^DOCUMENT_STORE_ERASURE_FINGERPRINT_KEY=replace-with-distinct-32-character-secret$'''
+]

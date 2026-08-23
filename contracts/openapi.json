@@ -9,7 +9,7 @@
     "license" : {
       "name" : "Proprietary and confidential"
     },
-    "version" : "4.3.0"
+    "version" : "4.4.0"
   },
   "servers" : [ {
     "url" : "http://localhost:8089",
@@ -46,16 +46,6 @@
           }
         } ],
         "responses" : {
-          "400" : {
-            "description" : "Malformed operation identifier or owner context",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "200" : {
             "description" : "Owner-scoped permanent-erasure status",
             "content" : {
@@ -78,6 +68,16 @@
           },
           "404" : {
             "description" : "Owner-scoped operation was not found",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "Malformed operation identifier or owner context",
             "content" : {
               "*/*" : {
                 "schema" : {
@@ -123,18 +123,8 @@
           "required" : true
         },
         "responses" : {
-          "403" : {
-            "description" : "Retention administrator authority is required",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409" : {
-            "description" : "Policy, recovery, legal hold or exact-scope guard blocked erasure",
+          "400" : {
+            "description" : "Malformed or duplicate exact scope",
             "content" : {
               "*/*" : {
                 "schema" : {
@@ -149,6 +139,16 @@
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/PermanentErasureResponse"
+                }
+              }
+            }
+          },
+          "403" : {
+            "description" : "Retention administrator authority is required",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -173,8 +173,8 @@
               }
             }
           },
-          "400" : {
-            "description" : "Malformed or duplicate exact scope",
+          "409" : {
+            "description" : "Policy, recovery, legal hold or exact-scope guard blocked erasure",
             "content" : {
               "*/*" : {
                 "schema" : {
@@ -240,8 +240,8 @@
               }
             }
           },
-          "403" : {
-            "description" : "Retention administrator authority is required",
+          "400" : {
+            "description" : "Malformed restore-replay request",
             "content" : {
               "*/*" : {
                 "schema" : {
@@ -250,8 +250,18 @@
               }
             }
           },
-          "400" : {
-            "description" : "Malformed restore-replay request",
+          "409" : {
+            "description" : "Journal, owner, replay, scope or policy evidence conflicts",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403" : {
+            "description" : "Retention administrator authority is required",
             "content" : {
               "*/*" : {
                 "schema" : {
@@ -270,16 +280,6 @@
               }
             }
           },
-          "503" : {
-            "description" : "Immutable journal or exact object erasure remains retryable",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "404" : {
             "description" : "Owner-scoped retained operation was not found",
             "content" : {
@@ -290,8 +290,8 @@
               }
             }
           },
-          "409" : {
-            "description" : "Journal, owner, replay, scope or policy evidence conflicts",
+          "503" : {
+            "description" : "Immutable journal or exact object erasure remains retryable",
             "content" : {
               "*/*" : {
                 "schema" : {
@@ -339,6 +339,16 @@
           "required" : true
         },
         "responses" : {
+          "409" : {
+            "description" : "Window, policy or live-erasure prerequisite not satisfied",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "403" : {
             "description" : "Retention administrator authority is required",
             "content" : {
@@ -365,16 +375,6 @@
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/PermanentErasureResponse"
-                }
-              }
-            }
-          },
-          "409" : {
-            "description" : "Window, policy or live-erasure prerequisite not satisfied",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -871,8 +871,8 @@
           }
         },
         "responses" : {
-          "409" : {
-            "description" : "Idempotency or rate conflict",
+          "400" : {
+            "description" : "Malformed upload context",
             "content" : {
               "application/json" : {
                 "schema" : {
@@ -901,8 +901,8 @@
               }
             }
           },
-          "400" : {
-            "description" : "Malformed upload context",
+          "409" : {
+            "description" : "Idempotency or rate conflict",
             "content" : {
               "application/json" : {
                 "schema" : {
@@ -1738,6 +1738,30 @@
           }
         } ],
         "responses" : {
+          "503" : {
+            "description" : "Stored artifact failed integrity or safety validation",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Artifact not found, unavailable, not owned or not related to the document version",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "type" : "string",
+                    "format" : "byte"
+                  }
+                }
+              }
+            }
+          },
           "200" : {
             "description" : "Exact retained artifact bytes",
             "headers" : {
@@ -1773,30 +1797,6 @@
                 }
               }
             },
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "type" : "array",
-                  "items" : {
-                    "type" : "string",
-                    "format" : "byte"
-                  }
-                }
-              }
-            }
-          },
-          "503" : {
-            "description" : "Stored artifact failed integrity or safety validation",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404" : {
-            "description" : "Artifact not found, unavailable, not owned or not related to the document version",
             "content" : {
               "*/*" : {
                 "schema" : {
@@ -2161,6 +2161,16 @@
               }
             }
           },
+          "503" : {
+            "description" : "Stored file failed integrity or safety validation",
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "200" : {
             "description" : "Exact retained artifact bytes",
             "headers" : {
@@ -2204,16 +2214,6 @@
                     "type" : "string",
                     "format" : "byte"
                   }
-                }
-              }
-            }
-          },
-          "503" : {
-            "description" : "Stored file failed integrity or safety validation",
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -3571,7 +3571,7 @@
         "description" : "Replay-stable result of an explicit family current-pointer command"
       },
       "PermanentErasureReadinessResponse" : {
-        "required" : [ "backupExpiryEvidenceRequired", "backupRetentionPending", "backupRetentionPolicyVersion", "enabled", "liveErasureReconciliationPending", "maximumBackupRetentionDays", "policyVersion", "ready", "recoveryDays", "recoveryJournalEvidenceMissing", "recoveryJournalWritePending", "restoreJournalReadPending", "restoreReplayPending", "schemaVersion", "status" ],
+        "required" : [ "backupExpiryEvidenceRequired", "backupRetentionOverdue", "backupRetentionPending", "backupRetentionPolicyVersion", "enabled", "liveErasureReconciliationPending", "maximumBackupRetentionDays", "policyVersion", "ready", "recoveryDays", "recoveryJournalEvidenceMissing", "recoveryJournalWritePending", "restoreJournalReadPending", "restoreReplayPending", "schemaVersion", "status" ],
         "type" : "object",
         "properties" : {
           "schemaVersion" : {
@@ -3627,6 +3627,10 @@
             "format" : "int64"
           },
           "backupRetentionPending" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "backupRetentionOverdue" : {
             "type" : "integer",
             "format" : "int64"
           }

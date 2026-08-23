@@ -242,9 +242,13 @@ the pinned Document Store revision/OpenAPI hash is recorded under the
 independently reviewed `documentStorePermanentErasureVerified` capability.
 Once any operation exists, the write-fence, matching key ring and journal must
 remain configured even if new erasures are disabled. Readiness reports
-`schemaVersion=document-permanent-erasure-readiness.v2` and the aggregate fields
+`schemaVersion=document-permanent-erasure-readiness.v3` and the aggregate fields
 `recoveryJournalWritePending`, `recoveryJournalEvidenceMissing`,
 `liveErasureReconciliationPending`, `restoreJournalReadPending`,
-`restoreReplayPending` and `backupRetentionPending` without raw identifiers.
-Every count must be zero for release. Credentials alone never enable the
-feature.
+`restoreReplayPending`, `backupRetentionPending` and
+`backupRetentionOverdue` without raw identifiers. `backupRetentionPending` is
+informational while the promised 35-day recovery-copy window remains open;
+it does not make a healthy runtime unready. `backupRetentionOverdue` counts
+operations still awaiting expiry evidence at or after their individual
+deadline and must be zero for release. Every other reconciliation count must
+also be zero. Credentials alone never enable the feature.

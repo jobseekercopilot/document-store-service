@@ -34,6 +34,10 @@ public interface DocumentOwnerErasureOperationRepository
 
     long countByStateIn(Collection<DocumentOwnerErasureState> states);
 
+    long countByStateAndBackupRetentionUntilLessThanEqual(
+            DocumentOwnerErasureState state,
+            LocalDateTime cutoff);
+
     List<DocumentOwnerErasureOperation> findByStateInOrderByUpdatedAtAscOperationIdAsc(
             Collection<DocumentOwnerErasureState> states,
             Pageable pageable);

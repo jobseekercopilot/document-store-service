@@ -85,7 +85,8 @@ public class S3PermanentErasureJournal implements PermanentErasureJournal {
             requireContent(content, contentSha256);
             requireVersion(response.response().versionId());
             if (response.response().serverSideEncryption() != ServerSideEncryption.AWS_KMS
-                    || !kmsKeyId.equals(response.response().ssekmsKeyId())) {
+                    || !kmsKeyId.equals(response.response().ssekmsKeyId())
+                    || !Boolean.TRUE.equals(response.response().bucketKeyEnabled())) {
                 throw new ObjectStorageException(
                         "Permanent-erasure recovery journal encryption evidence is invalid");
             }

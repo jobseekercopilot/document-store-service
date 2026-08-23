@@ -230,6 +230,10 @@ For the separate journal bucket, the Document Store task needs only
 `permanent-erasures/v1/*`. It does not need bucket listing or any journal
 delete, bypass or bucket-policy permission. S3 writes use `If-None-Match: *`,
 SHA-256 checksum/metadata, SSE-KMS with the exact journal key and bucket keys.
+The client explicitly requests a bucket key and fails closed unless the
+version-scoped read-back reports the exact KMS key and
+`BucketKeyEnabled=true`. Bucket-key request headers are not valid IAM condition
+keys and must not be used to gate `PutObject` authorization.
 The KMS grant is limited to `kms:GenerateDataKey` and `kms:Decrypt` via S3 for
 that bucket/prefix encryption context. The task does not call `kms:Encrypt` or
 `kms:DescribeKey`. Infrastructure

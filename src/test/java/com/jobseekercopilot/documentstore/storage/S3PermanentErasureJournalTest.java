@@ -112,7 +112,7 @@ class S3PermanentErasureJournalTest {
     }
 
     @Test
-    void missingVersionOrWrongKmsEvidenceFailsClosed() {
+    void missingVersionWrongKmsOrDisabledBucketKeyEvidenceFailsClosed() {
         S3Client missingVersion = mock(S3Client.class);
         byte[] content = canonicalContent(UUID.randomUUID());
         when(missingVersion.putObject(
@@ -143,6 +143,7 @@ class S3PermanentErasureJournalTest {
                                 .versionId("journal-v1")
                                 .serverSideEncryption(ServerSideEncryption.AWS_KMS)
                                 .ssekmsKeyId("wrong-key")
+                                .bucketKeyEnabled(true)
                                 .metadata(Map.of(
                                         "content-sha256",
                                         ObjectIntegrity.sha256(content)))
@@ -150,6 +151,25 @@ class S3PermanentErasureJournalTest {
                         content));
         assertThatThrownBy(() -> new S3PermanentErasureJournal(
                         wrongKms, BUCKET, KMS_KEY)
+                .read(operationId, "journal-v1"))
+                .isInstanceOf(ObjectStorageException.class)
+                .hasMessageContaining("encryption evidence");
+
+        S3Client disabledBucketKey = mock(S3Client.class);
+        when(disabledBucketKey.getObjectAsBytes(any(GetObjectRequest.class)))
+                .thenReturn(ResponseBytes.fromByteArray(
+                        GetObjectResponse.builder()
+                                .versionId("journal-v1")
+                                .serverSideEncryption(ServerSideEncryption.AWS_KMS)
+                                .ssekmsKeyId(KMS_KEY)
+                                .bucketKeyEnabled(false)
+                                .metadata(Map.of(
+                                        "content-sha256",
+                                        ObjectIntegrity.sha256(content)))
+                                .build(),
+                        content));
+        assertThatThrownBy(() -> new S3PermanentErasureJournal(
+                        disabledBucketKey, BUCKET, KMS_KEY)
                 .read(operationId, "journal-v1"))
                 .isInstanceOf(ObjectStorageException.class)
                 .hasMessageContaining("encryption evidence");
@@ -162,6 +182,7 @@ class S3PermanentErasureJournalTest {
                         .versionId(version)
                         .serverSideEncryption(ServerSideEncryption.AWS_KMS)
                         .ssekmsKeyId(KMS_KEY)
+                        .bucketKeyEnabled(true)
                         .metadata(Map.of("content-sha256", sha256))
                         .build(),
                 content);

@@ -151,6 +151,10 @@ public class DocumentPermanentErasureService {
                 List.of(DocumentOwnerErasureState.RESTORE_REPLAY_PENDING));
         long backupPending = operationRepository.countByStateIn(
                 List.of(DocumentOwnerErasureState.BACKUP_RETENTION_PENDING));
+        long backupOverdue = operationRepository
+                .countByStateAndBackupRetentionUntilLessThanEqual(
+                        DocumentOwnerErasureState.BACKUP_RETENTION_PENDING,
+                        LocalDateTime.now(ZoneOffset.UTC));
         boolean enabled = properties.isPermanentErasureEnabled();
         boolean ready = configured
                 && missingJournalEvidence == 0
@@ -158,7 +162,7 @@ public class DocumentPermanentErasureService {
                 && livePending == 0
                 && restoreJournalReadPending == 0
                 && restorePending == 0
-                && backupPending == 0;
+                && backupOverdue == 0;
         PermanentErasureReadinessStatus status = !enabled
                 ? PermanentErasureReadinessStatus.DISABLED
                 : !configured
@@ -167,7 +171,7 @@ public class DocumentPermanentErasureService {
                                 ? PermanentErasureReadinessStatus.READY
                                 : PermanentErasureReadinessStatus.RECONCILIATION_REQUIRED;
         return new PermanentErasureReadinessResponse(
-                "document-permanent-erasure-readiness.v2",
+                "document-permanent-erasure-readiness.v3",
                 enabled,
                 ready,
                 status,
@@ -183,7 +187,8 @@ public class DocumentPermanentErasureService {
                 livePending,
                 restoreJournalReadPending,
                 restorePending,
-                backupPending);
+                backupPending,
+                backupOverdue);
     }
 
     public int reconcileBatch() {

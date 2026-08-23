@@ -224,15 +224,27 @@ class DocumentPermanentErasureIntegrationTest {
                         .header(DocumentServiceIdentityFilter.SERVICE_HEADER,
                                 RETENTION_TOKEN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.ready").value(false))
-                .andExpect(jsonPath("$.status")
-                        .value("RECONCILIATION_REQUIRED"))
-                .andExpect(jsonPath("$.backupRetentionPending").value(1));
+                .andExpect(jsonPath("$.schemaVersion")
+                        .value("document-permanent-erasure-readiness.v3"))
+                .andExpect(jsonPath("$.ready").value(true))
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.backupRetentionPending").value(1))
+                .andExpect(jsonPath("$.backupRetentionOverdue").value(0));
 
         var pending = erasureRepository.findById(operationId).orElseThrow();
         pending.setLiveDataErasedAt(LocalDateTime.now().minusDays(2));
         pending.setBackupRetentionUntil(LocalDateTime.now().minusDays(1));
         erasureRepository.saveAndFlush(pending);
+
+        mockMvc.perform(get("/internal/retention/v1/permanent-erasures/readiness")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                RETENTION_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ready").value(false))
+                .andExpect(jsonPath("$.status")
+                        .value("RECONCILIATION_REQUIRED"))
+                .andExpect(jsonPath("$.backupRetentionPending").value(1))
+                .andExpect(jsonPath("$.backupRetentionOverdue").value(1));
 
         assertThat(service.reconcileBatch()).isZero();
         assertThat(erasureRepository.findById(operationId).orElseThrow().getState())

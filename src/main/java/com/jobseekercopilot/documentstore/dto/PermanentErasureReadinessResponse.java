@@ -32,5 +32,7 @@ public record PermanentErasureReadinessResponse(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         long restoreReplayPending,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
-        long backupRetentionPending) {
+        long backupRetentionPending,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
+        long backupRetentionOverdue) {
 }

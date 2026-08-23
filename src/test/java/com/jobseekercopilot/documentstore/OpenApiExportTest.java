@@ -57,7 +57,7 @@ class OpenApiExportTest {
                 .getContentAsString();
         var generated = objectMapper.readTree(specification);
 
-        assertEquals("4.3.0", generated.at("/info/version").asText());
+        assertEquals("4.4.0", generated.at("/info/version").asText());
         var permanentErasure = generated.at(
                 "/paths/~1internal~1retention~1v1~1permanent-erasures~1{operationId}/put");
         assertTrue(permanentErasure.isObject());
@@ -179,7 +179,8 @@ class OpenApiExportTest {
                 "liveErasureReconciliationPending",
                 "restoreJournalReadPending",
                 "restoreReplayPending",
-                "backupRetentionPending"
+                "backupRetentionPending",
+                "backupRetentionOverdue"
         }) {
             assertTrue(readinessSchema.path("properties").has(property));
         }

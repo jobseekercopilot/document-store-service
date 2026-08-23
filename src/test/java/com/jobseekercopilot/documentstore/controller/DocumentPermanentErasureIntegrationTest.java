@@ -313,6 +313,163 @@ class DocumentPermanentErasureIntegrationTest {
     }
 
     @Test
+    void emptySyntheticOwnerJournalSurvivesPreOperationCloneAndReplaysReadily()
+            throws Exception {
+        String syntheticOwner = "restore-drill-canary-" + UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        String approvalReference = "restore-drill-empty-owner-source";
+
+        mockMvc.perform(put(
+                                "/internal/retention/v1/permanent-erasures/{operationId}",
+                                operationId)
+                        .headers(retentionHeaders(syntheticOwner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of(
+                                "documentIds", List.of(),
+                                "approvalReference", approvalReference))))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.schemaVersion")
+                        .value("document-permanent-erasure.v2"))
+                .andExpect(jsonPath("$.operationId").value(operationId.toString()))
+                .andExpect(jsonPath("$.status")
+                        .value("BACKUP_RETENTION_PENDING"))
+                .andExpect(jsonPath("$.documentCount").value(0))
+                .andExpect(jsonPath("$.objectScopeCount").value(0))
+                .andExpect(jsonPath("$.recoveryJournalEvidenceRecorded").value(true))
+                .andExpect(jsonPath("$.liveDataErased").value(true))
+                .andExpect(jsonPath("$.backupRetentionWindowElapsed").value(false))
+                .andExpect(jsonPath("$.backupExpiryEvidenceRecorded").value(false))
+                .andExpect(jsonPath("$.backupCopiesMayRemain").value(true));
+
+        // An exact retry must resume the durable operation rather than creating
+        // a second immutable journal record.
+        mockMvc.perform(put(
+                                "/internal/retention/v1/permanent-erasures/{operationId}",
+                                operationId)
+                        .headers(retentionHeaders(syntheticOwner))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of(
+                                "documentIds", List.of(),
+                                "approvalReference", approvalReference))))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status")
+                        .value("BACKUP_RETENTION_PENDING"));
+
+        var sourceOperation = erasureRepository.findById(operationId).orElseThrow();
+        String sourceJournalKey = sourceOperation.getJournalObjectKey();
+        String sourceJournalVersion = sourceOperation.getJournalObjectVersion();
+        String sourceJournalSha256 = sourceOperation.getJournalContentSha256();
+        LocalDateTime sourceCreatedAt = sourceOperation.getCreatedAt();
+        assertThat(sourceOperation.getState())
+                .isEqualTo(DocumentOwnerErasureState.BACKUP_RETENTION_PENDING);
+        assertThat(sourceOperation.getOwnerId()).isNull();
+        assertThat(sourceOperation.getDocumentCount()).isZero();
+        assertThat(sourceOperation.getObjectScopeCount()).isZero();
+        assertThat(sourceJournalKey)
+                .isEqualTo(PermanentErasureJournalKeys.forOperation(operationId));
+        assertThat(sourceJournalVersion).isNotBlank();
+        assertThat(sourceJournalSha256).matches("[0-9a-f]{64}");
+        assertThat(sourceOperation.getJournalRecordedAt()).isNotNull();
+        assertThat(scopeRepository.findByOperationIdOrderByStorageScopeAsc(operationId))
+                .isEmpty();
+        assertOwnerDataErased(syntheticOwner);
+        verify(recoveryJournal).writeOrVerify(
+                any(UUID.class), any(byte[].class), anyString());
+        verify(objectStorage, never()).permanentlyDeletePrefix(anyString());
+        verify(objectStorage, never()).permanentlyDeleteKey(anyString());
+
+        // Model a database clone taken before the source operation. The external
+        // immutable journal deliberately remains available while all operation
+        // and scope rows are absent from the replay database.
+        restoreRequestRepository.deleteAll();
+        scopeRepository.deleteAll();
+        erasureRepository.deleteAll();
+        assertThat(erasureRepository.findById(operationId)).isEmpty();
+        clearInvocations(recoveryJournal, objectStorage);
+
+        UUID restoreReplayId = UUID.randomUUID();
+        String replayEvidence = "restore-drill-empty-owner-replay";
+        performRestoreReplay(
+                        operationId,
+                        restoreReplayId,
+                        syntheticOwner,
+                        replayEvidence)
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.schemaVersion")
+                        .value("document-permanent-erasure.v2"))
+                .andExpect(jsonPath("$.operationId").value(operationId.toString()))
+                .andExpect(jsonPath("$.status")
+                        .value("BACKUP_RETENTION_PENDING"))
+                .andExpect(jsonPath("$.documentCount").value(0))
+                .andExpect(jsonPath("$.objectScopeCount").value(0))
+                .andExpect(jsonPath("$.recoveryJournalEvidenceRecorded").value(true))
+                .andExpect(jsonPath("$.liveDataErased").value(true))
+                .andExpect(jsonPath("$.restoreReplayId")
+                        .value(restoreReplayId.toString()))
+                .andExpect(jsonPath("$.restoreReplayEvidenceRecorded").value(true))
+                .andExpect(jsonPath("$.restoreReplayRequestedAt").isNotEmpty())
+                .andExpect(jsonPath("$.restoreReplayObjectErasedAt").isNotEmpty())
+                .andExpect(jsonPath("$.backupRetentionWindowElapsed").value(false))
+                .andExpect(jsonPath("$.backupExpiryEvidenceRecorded").value(false));
+
+        // The exact replay is itself idempotent and must not reread or rewrite
+        // the retained journal after the durable replay binding exists.
+        performRestoreReplay(
+                        operationId,
+                        restoreReplayId,
+                        syntheticOwner,
+                        replayEvidence)
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status")
+                        .value("BACKUP_RETENTION_PENDING"))
+                .andExpect(jsonPath("$.restoreReplayId")
+                        .value(restoreReplayId.toString()));
+
+        var replayed = erasureRepository.findById(operationId).orElseThrow();
+        assertThat(replayed.getState())
+                .isEqualTo(DocumentOwnerErasureState.BACKUP_RETENTION_PENDING);
+        assertThat(replayed.getOwnerId()).isNull();
+        assertThat(replayed.getDocumentCount()).isZero();
+        assertThat(replayed.getObjectScopeCount()).isZero();
+        assertThat(replayed.getJournalObjectKey()).isEqualTo(sourceJournalKey);
+        assertThat(replayed.getJournalObjectVersion()).isEqualTo(sourceJournalVersion);
+        assertThat(replayed.getJournalContentSha256()).isEqualTo(sourceJournalSha256);
+        assertThat(replayed.getCreatedAt()).isEqualTo(sourceCreatedAt);
+        assertThat(replayed.getRestoreReplayId()).isEqualTo(restoreReplayId);
+        assertThat(replayed.getRestoreReplayEvidenceSha256()).matches("[0-9a-f]{64}");
+        assertThat(replayed.getRestoreReplayObjectErasedAt())
+                .isEqualTo(replayed.getLiveDataErasedAt());
+        assertThat(replayed.getBackupRetentionUntil())
+                .isAfter(replayed.getLiveDataErasedAt());
+        assertThat(restoreRequestRepository.count()).isZero();
+        assertThat(scopeRepository.findByOperationIdOrderByStorageScopeAsc(operationId))
+                .isEmpty();
+        assertOwnerDataErased(syntheticOwner);
+        verify(recoveryJournal).read(operationId, null);
+        verify(recoveryJournal, never()).writeOrVerify(
+                any(UUID.class), any(byte[].class), anyString());
+        verify(objectStorage, never()).permanentlyDeletePrefix(anyString());
+        verify(objectStorage, never()).permanentlyDeleteKey(anyString());
+
+        mockMvc.perform(get("/internal/retention/v1/permanent-erasures/readiness")
+                        .header(DocumentServiceIdentityFilter.SERVICE_HEADER,
+                                RETENTION_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.schemaVersion")
+                        .value("document-permanent-erasure-readiness.v3"))
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.ready").value(true))
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.recoveryJournalWritePending").value(0))
+                .andExpect(jsonPath("$.recoveryJournalEvidenceMissing").value(0))
+                .andExpect(jsonPath("$.liveErasureReconciliationPending").value(0))
+                .andExpect(jsonPath("$.restoreJournalReadPending").value(0))
+                .andExpect(jsonPath("$.restoreReplayPending").value(0))
+                .andExpect(jsonPath("$.backupRetentionPending").value(1))
+                .andExpect(jsonPath("$.backupRetentionOverdue").value(0));
+    }
+
+    @Test
     @ResourceLock("default-time-zone")
     void recoveryJournalTimestampUsesUtcWhenProcessTimezoneDoesNot() {
         TimeZone originalTimeZone = TimeZone.getDefault();

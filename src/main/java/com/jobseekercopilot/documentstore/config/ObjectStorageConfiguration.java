@@ -4,6 +4,7 @@ import com.jobseekercopilot.documentstore.storage.DocumentObjectStorage;
 import com.jobseekercopilot.documentstore.storage.FileSystemDocumentObjectStorage;
 import com.jobseekercopilot.documentstore.storage.S3DocumentObjectStorage;
 import java.net.URI;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -73,7 +74,8 @@ public class ObjectStorageConfiguration {
             havingValue = "s3",
             matchIfMissing = true)
     DocumentObjectStorage s3DocumentObjectStorage(
-            ObjectStorageProperties properties, S3Client s3Client) {
+            ObjectStorageProperties properties,
+            @Qualifier("documentStoreS3Client") S3Client s3Client) {
         return new S3DocumentObjectStorage(
                 s3Client,
                 properties.getS3().getBucket(),

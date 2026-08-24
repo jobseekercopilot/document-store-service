@@ -13,8 +13,6 @@ spring:
     driver-class-name: org.postgresql.Driver
     username: ${DOCUMENT_STORE_DATABASE_USERNAME}
     password: ${DOCUMENT_STORE_DATABASE_PASSWORD}
-    hikari:
-      initialization-fail-timeout: 1
   flyway:
     enabled: true
     locations: classpath:db/migration/common

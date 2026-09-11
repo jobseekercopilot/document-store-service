@@ -9,6 +9,7 @@ FROM eclipse-temurin:17-jre-alpine
 RUN apk add --no-cache --upgrade \
     libcrypto3=3.5.8-r0 \
     libssl3=3.5.8-r0 \
+    expat=2.8.4-r0 \
     openssl=3.5.8-r0
 
 WORKDIR /app
